@@ -241,7 +241,7 @@
           throw new ZipArchiveError(`${name} uses an unsupported ZIP compression method.`);
         }
         if (uncompressedSize > MAX_ENTRY_SIZE) {
-          throw new ZipArchiveError(`${name} exceeds the 32 MiB extracted-file limit.`);
+          throw new ZipArchiveError(`${name} exceeds the 64 MiB extracted-file limit.`);
         }
         totalSize += uncompressedSize;
         if (totalSize > MAX_TOTAL_SIZE) {

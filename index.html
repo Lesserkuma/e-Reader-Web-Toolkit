@@ -7,35 +7,8 @@
     <meta name="theme-color" content="#0d0f1a">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'">
     <title>e-Reader Web Toolkit</title>
-    <link rel="stylesheet" href="css/styles.css?3">
-    <script src="js/processing_limits.js?3" defer></script>
-    <script src="js/binary.js?3" defer></script>
-    <script src="js/card_constants.js?3" defer></script>
-    <script src="js/reed_solomon.js?3" defer></script>
-    <script src="js/dotcode_layout.js?3" defer></script>
-    <script src="js/title_codec.js?3" defer></script>
-    <script src="js/raw_codec.js?3" defer></script>
-    <script src="js/save_format.js?3" defer></script>
-    <script src="js/application_codec.js?3" defer></script>
-    <script src="js/patcher.js?3" defer></script>
-    <script src="js/dotcode_math.js?3" defer></script>
-    <script src="js/dotcode_profile.js?3" defer></script>
-    <script src="js/dotcode_context.js?3" defer></script>
-    <script src="js/dotcode_sampling.js?3" defer></script>
-    <script src="js/dotcode_scan.js?3" defer></script>
-    <script src="js/svg_format.js?3" defer></script>
-    <script src="js/svg_renderer.js?3" defer></script>
-    <script src="js/svg_raster.js?3" defer></script>
-    <script src="js/svg.js?3" defer></script>
-    <script src="js/save_data.js?3" defer></script>
-    <script src="js/zip_archive.js?3" defer></script>
-    <script src="js/input_files.js?3" defer></script>
-    <script src="js/browser_runtime.js?3" defer></script>
-    <script src="js/app_model.js?3" defer></script>
-    <script src="js/app_view.js?3" defer></script>
-    <script src="js/app_import.js?3" defer></script>
-    <script src="js/app_output.js?3" defer></script>
-    <script src="js/app.js?3" defer></script>
+    <link rel="stylesheet" href="css/styles.css?7">
+    <script src="js/loader.js?3" defer></script>
   </head>
   <body>
     <div class="page-shell">
@@ -90,7 +63,7 @@
                   <th scope="col">Region</th>
                   <th scope="col">Content</th>
                   <th id="data-heading" class="data-column" scope="col" hidden>Export</th>
-                  <th id="crc32-heading" class="crc32-column" scope="col" hidden>CRC32</th>
+                  <th id="crc32-heading" class="crc32-column" scope="col" hidden>Raw CRC32</th>
                   <th id="remove-heading" class="remove-column" scope="col" aria-label="Remove content" hidden></th>
                 </tr>
               </thead>
@@ -156,7 +129,7 @@
       </main>
 
       <footer>
-        <div><b>e-Reader Web Toolkit v1.1</b> by Lesserkuma<br><small>AI disclosure: Developed with assistance from GPT-6<br>Source code available on <a href="https://github.com/Lesserkuma/e-Reader-Web-Toolkit" target="_blank">GitHub</a></small></div>
+        <div><b>e-Reader Web Toolkit v1.2</b> by Lesserkuma<br><small>AI disclosure: Developed with assistance from GPT-6<br>Source code available on <a href="https://github.com/Lesserkuma/e-Reader-Web-Toolkit" target="_blank">GitHub</a></small></div>
         <div>
           Technical references and validation:<br>
           <a href="https://www.problemkaputt.de/gbatek.txt" target="_blank" rel="noopener noreferrer">GBATEK Technical Info</a> by Martin Korth<br>

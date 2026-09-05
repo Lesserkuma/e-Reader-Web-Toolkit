@@ -71,7 +71,7 @@
         return `${file.name} is not a supported long or short RAW strip.`;
       }
       if ((kind === "SCAN" || kind === "SVG") && file.size > limits.MAX_IMAGE_FILE_BYTES) {
-        return `${file.name} exceeds the 32 MiB image limit.`;
+        return `${file.name} exceeds the 64 MiB image limit.`;
       }
       return "";
     }

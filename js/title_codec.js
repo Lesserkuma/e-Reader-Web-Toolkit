@@ -2,11 +2,11 @@
   "use strict";
 
   if (typeof module === "object" && module.exports) {
-    module.exports = factory(require("./binary.js"), require("./card_constants.js"));
+    module.exports = factory(require("./binary.js"));
   } else {
-    root.EReaderTitleCodec = factory(root.EReaderBinary, root.EReaderCardConstants);
+    root.EReaderTitleCodec = factory(root.EReaderBinary);
   }
-})(typeof globalThis !== "undefined" ? globalThis : this, function (binary, constants) {
+})(typeof globalThis !== "undefined" ? globalThis : this, function (binary) {
   "use strict";
 
   const { asBytes, bytesFromHex } = binary;

@@ -9,6 +9,7 @@
       require("./reed_solomon.js"),
       require("./raw_codec.js"),
       require("./dotcode_sampling.js"),
+      require("./dotcode_recovery.js"),
     );
   } else {
     root.EReaderDotcodeScan = factory(
@@ -18,11 +19,12 @@
       root.EReaderReedSolomon,
       root.EReaderRawCodec,
       root.EReaderDotcodeSampling,
+      root.EReaderDotcodeRecovery,
     );
   }
 })(
   typeof globalThis !== "undefined" ? globalThis : this,
-  function (binary, layout, limits, reedSolomon, rawModule, sampling) {
+  function (binary, layout, limits, reedSolomon, rawModule, sampling, recovery) {
     "use strict";
 
     const {
@@ -54,7 +56,7 @@
 
     const MAX_LOCATED_MARKER_GRIDS = 64;
 
-    const scanQualities = new WeakMap();
+    const MAX_RECOVERY_ATTEMPTS = 8;
 
     const JPEG_START_OF_FRAME_MARKERS = new Set([
       0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf,
@@ -1261,7 +1263,7 @@
       }
       return Array.from(
         new Set(
-          [0.28, 0.34, 0.22, 0.4, 0.16, 0.46].map((ratio) =>
+          [0.28, 0.34, 0.22, 0.4, 0.16, 0.46, 0.58, 0.7].map((ratio) =>
             Math.round(dark + (light - dark) * ratio),
           ),
         ),
@@ -1280,7 +1282,9 @@
       const grids = [];
       const thresholds = fullScanMarkerThresholds(image);
       const scale = Math.min(image.width, image.height);
-      const minimumMarkerDimension = Math.max(3, Math.round(scale * 0.002));
+      // Full-card previews can shrink sync disks to two pixels and lighten them
+      // through averaging, so include small components and brighter thresholds.
+      const minimumMarkerDimension = 2;
       const maximumMarkerDimension = Math.min(80, Math.max(7, Math.round(scale * 0.03)));
 
       for (const threshold of thresholds) {
@@ -1460,14 +1464,12 @@
     }
 
     function refineDecodedRaw(image, top, bottom, raw) {
-      const result = sampling.refineRaw(
+      return sampling.refineRaw(
         image.sourceImage || image,
         image.toSourcePoint ? top.map(image.toSourcePoint) : top,
         image.toSourcePoint ? bottom.map(image.toSourcePoint) : bottom,
         raw,
       );
-      scanQualities.set(result.raw, result.quality);
-      return result.raw;
     }
 
     function decodeMarkerGrid(image, markers) {
@@ -1499,7 +1501,8 @@
       );
     }
 
-    function appendDecodedApplication(decoded, raw, center) {
+    function appendDecodedApplication(decoded, result, center) {
+      const { raw, quality } = result;
       const { app: application, cardType } = rawCodec.decodeRawDotcodeDetails(
         raw,
         "The corrected strip",
@@ -1512,7 +1515,7 @@
       ) {
         return;
       }
-      decoded.push({ raw, application, cardType, center });
+      decoded.push({ raw, quality, application, cardType, center });
     }
 
     function horizontalPreciseFallbackImage(image) {
@@ -1548,6 +1551,8 @@
         errors.push(error.message);
       }
       const decoded = [];
+      let recoverySession;
+      let recoveryAttempts = 0;
       for (const grid of coarseGrids) {
         let candidate;
         try {
@@ -1590,11 +1595,35 @@
             break;
           }
         }
+        if (!decodedCandidate) {
+          const markers = candidate.markers;
+          const top = markers.top.map(candidate.image.toSourcePoint);
+          const bottom = markers.bottom.map(candidate.image.toSourcePoint);
+          const pitch = Math.hypot(top[1].x - top[0].x, top[1].y - top[0].y) / 35;
+          if (pitch >= 1.25 && pitch <= 2.75 && recoveryAttempts < MAX_RECOVERY_ATTEMPTS) {
+            recoverySession ||= recovery.createSession(rgba);
+            const reversedTop = top.slice().reverse();
+            const reversedBottom = bottom.slice().reverse();
+            for (const [first, second] of [
+              [top, bottom], [reversedBottom, reversedTop],
+              [reversedTop, reversedBottom], [bottom, top],
+            ]) {
+              if (recoveryAttempts >= MAX_RECOVERY_ATTEMPTS) break;
+              recoveryAttempts++;
+              try {
+                const result = recoverySession.decode(first, second);
+                if (!result) continue;
+                appendDecodedApplication(decoded, result, candidate.center);
+                break;
+              } catch (error) {
+                errors.push(error.message);
+              }
+            }
+          }
+        }
       }
 
-      // A tightly cropped strip still gets the multi-strip search above. If its
-      // coarse locator lost a marker while downsampling, retain the established
-      // precise single-strip locator as a compatibility fallback.
+      // Downsampling can hide markers in tightly cropped strips; retry at full resolution.
       const fallbackAspect = Math.max(rgba.width, rgba.height) / Math.min(rgba.width, rgba.height);
       if (decoded.length === 0 && fallbackAspect >= 8) {
         const preciseImage = horizontalPreciseFallbackImage(rgba);
@@ -1621,18 +1650,18 @@
               (errors[0] || "No valid Nintendo e-Reader data was found."),
         );
       }
-      return decoded
-        .sort((left, right) => left.center.y - right.center.y || left.center.x - right.center.x)
-        .map((entry) => entry.raw);
+      return decoded.sort(
+        (left, right) => left.center.y - right.center.y || left.center.x - right.center.x,
+      );
     }
 
     function decodeDotcodeImages(image, options = {}) {
       const rgba = asRgbaImage(image);
       const decoded = decodeLocatedDotcodeImages(rgba);
       if (typeof options?.onStripDecoded === "function") {
-        for (const raw of decoded) options.onStripDecoded(raw, scanQualities.get(raw));
+        for (const { raw, quality } of decoded) options.onStripDecoded(raw, quality);
       }
-      return decoded;
+      return decoded.map((entry) => entry.raw);
     }
 
     function correctReedSolomon64_48(codeword) {

@@ -486,10 +486,6 @@ a {
   width: 32%;
 }
 
-.content-file-table .crc32-column {
-  width: 6rem;
-}
-
 .content-file-table td.crc32-column {
   font-family: monospace;
 }
@@ -497,13 +493,64 @@ a {
 .content-file-table .scan-quality {
   display: block;
   margin-top: .2rem;
-  color: var(--text3);
+  padding: .15rem 0;
+  border: 0;
+  background: none;
+  color: var(--yellow);
   font-family: system-ui, sans-serif;
-  font-size: .55rem;
+  font-size: .6rem;
+  text-align: left;
+  white-space: normal;
+  text-decoration: underline dotted;
+  text-underline-offset: .2rem;
 }
 
-.content-file-table .scan-quality[data-uncertain="true"] {
+.scan-quality:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+.scan-quality-popover {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  width: min(25rem, calc(100vw - 16px));
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--yellow-border);
+  border-radius: var(--radius);
+  background: var(--bg2);
+  box-shadow: var(--shadow);
+  color: var(--text2);
+  font-family: system-ui, sans-serif;
+  font-size: .78rem;
+  line-height: 1.6;
+  text-align: left;
+  white-space: normal;
+}
+
+.scan-quality-popover strong {
+  display: block;
+  color: var(--text);
+  font-size: .8rem;
+}
+
+.scan-quality-popover p {
+  margin: .35rem 0 .85rem;
+}
+
+.scan-quality-offsets {
+  display: block;
+  max-height: 6rem;
+  overflow-y: auto;
+  padding: .5rem .65rem;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
   color: var(--yellow);
+  font-size: .7rem;
+  overflow-wrap: anywhere;
 }
 
 .content-file-table .data-download-actions {
@@ -544,10 +591,6 @@ a {
 
 .content-file-table tr[data-state="pending"] td:not(:first-child) {
   color: var(--yellow);
-}
-
-.content-file-table tr[data-state="error"] td:not(:first-child) {
-  color: var(--red);
 }
 
 .file-card {

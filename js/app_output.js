@@ -22,25 +22,18 @@
   }) {
     const { state, selectedSaveFiles, selectedDotcodeFiles, isSaveDataMode } = model;
     const { setStatus, renderInputs } = view;
-    const { safeFilename, fileKind } = fileServices;
+    const { safeFilename } = fileServices;
     const { downloadBytes } = browserRuntime;
     const { rawDotcodeToSvg } = svgServices;
 
-    async function loadSource() {
+    function loadSource() {
       const saveFiles = selectedSaveFiles();
       const dotcodeFiles = selectedDotcodeFiles();
       if (dotcodeFiles.length > 0) {
-        const dotcodeKinds = new Set(dotcodeFiles.map(fileKind));
-        const sourceKind = dotcodeKinds.size === 1 ? [...dotcodeKinds][0] : "DOTCODE";
-
         if (state.preparedNative) {
           return {
             nativeRaw: state.preparedNative.bytes,
-            metadata: {
-              ...state.preparedNative.metadata,
-              sourceKind,
-              stripCount: 1,
-            },
+            metadata: state.preparedNative.metadata,
           };
         }
 
@@ -56,8 +49,6 @@
             ...metadata,
             applicationRegion: application.region === 1 ? "usa" : "japan",
             scanRegion: application.region,
-            sourceKind,
-            stripCount: application.stripCount,
           },
         };
       }
@@ -74,11 +65,7 @@
         }
         return {
           save: state.preparedSave.bytes,
-          metadata: {
-            ...state.preparedSave.application.metadata,
-            sourceKind: "SAV",
-            stripCount: 0,
-          },
+          metadata: state.preparedSave.application.metadata,
         };
       }
 
@@ -124,7 +111,7 @@
       await nextFrame();
 
       try {
-        const source = await loadSource();
+        const source = loadSource();
         if (isSaveDataMode()) {
           if (source.nativeRaw) {
             throw new Error(

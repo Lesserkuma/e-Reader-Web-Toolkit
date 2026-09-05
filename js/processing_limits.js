@@ -13,6 +13,6 @@
   return Object.freeze({
     MAX_IMAGE_PIXELS: 60_000_000,
     MAX_IMAGE_DIMENSION: 32_767,
-    MAX_IMAGE_FILE_BYTES: 32 * 1024 * 1024,
+    MAX_IMAGE_FILE_BYTES: 64 * 1024 * 1024,
   });
 });

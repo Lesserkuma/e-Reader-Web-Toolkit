@@ -22,9 +22,7 @@
       sourceError: "",
       sourceNotice: "",
       inputNotice: "",
-      sourceFileErrors: new Map(),
       preparing: false,
-      preparationId: 0,
       preparedDotcodes: new Map(),
       preparedApplication: null,
       preparedNative: null,
@@ -82,9 +80,7 @@
       if (state.busy || state.preparing || fileKind(file) !== "SAV") {
         return;
       }
-      state.preparationId += 1;
       state.sourceFiles = state.sourceFiles.filter((candidate) => candidate !== file);
-      state.sourceFileErrors.delete(file);
       if (state.preparedSave?.file === file) {
         state.preparedSave = null;
       }
@@ -104,9 +100,7 @@
         return;
       }
 
-      state.preparationId += 1;
       resetContentErrors();
-      state.sourceFileErrors.delete(file);
       state.preparedSave[component] = null;
 
       if (!state.preparedSave.application && !state.preparedSave.calibration) {
@@ -128,9 +122,7 @@
         return;
       }
 
-      state.preparationId += 1;
       resetContentErrors();
-      state.sourceFileErrors.delete(file);
       state.preparedApplication = null;
       state.preparedNative = null;
 
@@ -159,13 +151,11 @@
         state.optionError = "";
       }
       if (kind === "source" || kind === "all") {
-        state.preparationId += 1;
         state.sourceFiles = [];
         state.compatibilityError = "";
         state.optionError = "";
         state.sourceError = "";
         state.sourceNotice = "";
-        state.sourceFileErrors = new Map();
         state.preparedDotcodes = new Map();
         state.preparedApplication = null;
         state.preparedNative = null;
@@ -179,22 +169,13 @@
     function contentItems() {
       const items = [];
       const usingDotcodeContent = selectedDotcodeFiles().length > 0;
-      const unresolvedDetails = (file) =>
-        state.sourceFileErrors.has(file)
-          ? {
-              state: "error",
-              region: "Invalid",
-              title: "\u2014",
-              index: "\u2014",
-              count: "\u2014",
-            }
-          : {
-              state: "pending",
-              region: "Reading\u2026",
-              title: "\u2014",
-              index: "\u2014",
-              count: "\u2014",
-            };
+      const pendingDetails = () => ({
+        state: "pending",
+        region: "Reading\u2026",
+        title: "\u2014",
+        index: "\u2014",
+        count: "\u2014",
+      });
 
       for (const file of state.sourceFiles) {
         if (fileKind(file) === "SAV") {
@@ -204,7 +185,7 @@
               file,
               entry: null,
               contentKind: "application",
-              details: unresolvedDetails(file),
+              details: pendingDetails(),
               removeAction: "save-file",
             });
             continue;
@@ -298,7 +279,7 @@
             file,
             entry: null,
             contentKind: "application",
-            details: unresolvedDetails(file),
+            details: pendingDetails(),
             removeAction: null,
           });
         }
@@ -308,7 +289,7 @@
           file,
           entry: null,
           contentKind: "application",
-          details: unresolvedDetails(file),
+          details: pendingDetails(),
           removeAction: null,
         });
       }
@@ -345,7 +326,6 @@
           retainedFiles.push(file);
         } else {
           state.preparedDotcodes.delete(file);
-          state.sourceFileErrors.delete(file);
         }
       }
       state.sourceFiles = retainedFiles;
@@ -362,15 +342,9 @@
       state.preparedNative = null;
       const saveFiles = selectedSaveFiles();
       const dotcodeFiles = selectedDotcodeFiles();
-      if (saveFiles.length > 0 && state.sourceFileErrors.has(saveFiles[0])) {
-        state.sourceError = state.sourceFileErrors.get(saveFiles[0]);
-        return;
-      }
       if (dotcodeFiles.length === 0 && saveFiles.length > 0) {
         if (state.preparedSave?.file !== saveFiles[0]) {
-          state.sourceError =
-            state.sourceFileErrors.get(saveFiles[0]) ||
-            "The save file has not finished validating.";
+          state.sourceError = "The save file has not finished validating.";
         }
         return;
       }

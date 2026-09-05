@@ -76,7 +76,7 @@
       elements.removeHeading.hidden = !showRemoveActions;
       elements.contentFileTable.classList.toggle("has-data", showDataDownloads);
       elements.contentFileTable.classList.toggle("has-remove", showRemoveActions);
-      const rows = contentItems.map(({ file, entry, contentKind, details, removeAction }) => {
+      const rows = contentItems.map(({ file, entry, contentKind, details, removeAction }, rowIndex) => {
         const row = document.createElement("tr");
         row.dataset.state = details.state;
         row.dataset.contentKind = contentKind;
@@ -116,22 +116,63 @@
           if (entry?.scanQuality?.uncertainFillerBytes.length) {
             const quality = entry.scanQuality;
             const uncertainCount = quality.uncertainFillerBytes.length;
-            const note = document.createElement("span");
+            const note = document.createElement("button");
+            note.type = "button";
             note.className = "scan-quality";
-            note.dataset.uncertain = "true";
-            note.textContent = `${uncertainCount} uncertain`;
+            note.textContent = `${uncertainCount} uncertain filler ${uncertainCount === 1 ? "byte" : "bytes"}`;
             const offsets = quality.uncertainFillerBytes.map(
               (offset) => `0x${offset.toString(16).toUpperCase().padStart(4, "0")}`,
             );
-            const explanation =
-              `Card content passed error correction and checksum validation. ` +
-              `The ${quality.fillerBytes} filler bytes have no error correction or checksum. ` +
-              `${uncertainCount} filler bytes are uncertain: ${offsets.join(", ")}. ` +
-              "CRC32 identifies the complete RAW; it does not verify the scan.";
-            note.title = explanation;
-            note.setAttribute("aria-label", explanation);
-            checksumCell.title = `${details.crc32}. ${explanation}`;
-            checksumCell.append(note);
+            const explanation = document.createElement("div");
+            explanation.className = "scan-quality-popover";
+            explanation.id = `scan-quality-${rowIndex}`;
+            explanation.popover = "auto";
+            note.setAttribute("aria-describedby", explanation.id);
+            note.popoverTargetElement = explanation;
+            note.popoverTargetAction = "show";
+            const sections = [
+              ["strong", "Explanation"],
+              ["p", "The dot code has been verified valid and working, however, the following offset(s) in the unused filler data couldn't be verified. For proper preservation, it is recommended to scan the card again until no uncertain bytes are found."],
+              ["code", offsets.join(", "), "scan-quality-offsets"],
+            ];
+            for (const [tag, text, className] of sections) {
+              const part = document.createElement(tag);
+              part.textContent = text;
+              if (className) part.className = className;
+              explanation.append(part);
+            }
+            const position = () => {
+              const rect = note.getBoundingClientRect();
+              const width = explanation.offsetWidth;
+              const height = explanation.offsetHeight;
+              explanation.style.left = `${Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))}px`;
+              explanation.style.top = `${Math.max(8, rect.bottom + height <= window.innerHeight - 8 ? rect.bottom : rect.top - height)}px`;
+            };
+            const show = () => {
+              explanation.showPopover();
+              position();
+            };
+            const dismiss = (event) => {
+              if (event.type === "resize" || !explanation.contains(event.target)) explanation.hidePopover();
+            };
+            explanation.addEventListener("toggle", () => {
+              const open = explanation.matches(":popover-open");
+              if (open) position();
+              window[open ? "addEventListener" : "removeEventListener"]("scroll", dismiss, true);
+              window[open ? "addEventListener" : "removeEventListener"]("resize", dismiss);
+            });
+            const help = document.createElement("div");
+            help.append(note, explanation);
+            help.addEventListener("mouseenter", show);
+            help.addEventListener("mouseleave", () => {
+              if (!help.contains(document.activeElement)) explanation.hidePopover();
+            });
+            note.addEventListener("focus", show);
+            help.addEventListener("focusout", (event) => {
+              if (!help.contains(event.relatedTarget)) explanation.hidePopover();
+            });
+            checksumCell.removeAttribute("title");
+            checksumCell.append(help);
           }
           row.append(checksumCell);
         }

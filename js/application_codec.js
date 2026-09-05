@@ -89,14 +89,10 @@
 
         const cardCount = (header[4] >>> 5) | ((header[5] & 1) << 3);
         const cardIndex = (header[4] & 0x1e) >>> 1;
-        const encodedTwice = (header[6] << 8) | (header[5] & 0xfe);
+        const encodedSize = (header[6] << 7) | (header[5] >>> 1);
         if (!cardCount || cardIndex < 1 || cardIndex > cardCount) {
           throw new ErrorType(`${label} has an invalid card-set index`);
         }
-        if (encodedTwice & 1) {
-          throw new ErrorType(`${label} has an invalid application-data length`);
-        }
-        const encodedSize = encodedTwice / 2;
 
         const extendedApplicationHeader = (cardType & 0x0f) === 0x0e;
         const setTitleSize = extendedApplicationHeader ? 33 : 17;
@@ -181,16 +177,12 @@
         return {
           app,
           header: header.slice(),
-          header0: header[0],
-          header1: header[1],
-          headerTail,
           region,
           cardType,
           cardCount,
           cardIndex,
           encodedSize,
           payloadOffset,
-          titleArea: titleArea.slice(),
           embeddedTitle,
           embeddedTitleBytes: embeddedTitleBytes.slice(),
           saveTitleBytes,
@@ -433,38 +425,15 @@
 
         const indexedPayloads = new Map();
         let common = null;
+        let applicationTitle = null;
 
         for (const file of files) {
           const decoded = decodeRawDotcodeDetails(file.bytes, file.name);
           const parsed = parseDecodedApplicationStrip(decoded.app, file.name, decoded.cardType);
-          const { title, titleBytes } = applicationTitleForSave(parsed, fallbackTitle, file.name);
-
-          const candidate = {
-            header0: parsed.header0,
-            header1: parsed.header1,
-            cardType: parsed.cardType,
-            cardCount: parsed.cardCount,
-            encodedSize: parsed.encodedSize,
-            headerTail: parsed.headerTail,
-            titleArea: parsed.titleArea,
-            payloadOffset: parsed.payloadOffset,
-            title,
-            titleBytes: titleBytes.slice(),
-            region: parsed.region,
-            header: parsed.header,
-          };
           if (!common) {
-            common = candidate;
-          } else if (
-            candidate.header0 !== common.header0 ||
-            candidate.header1 !== common.header1 ||
-            candidate.cardType !== common.cardType ||
-            candidate.cardCount !== common.cardCount ||
-            candidate.encodedSize !== common.encodedSize ||
-            candidate.payloadOffset !== common.payloadOffset ||
-            !bytesEqual(candidate.headerTail, common.headerTail) ||
-            !bytesEqual(candidate.titleArea, common.titleArea)
-          ) {
+            common = parsed;
+            applicationTitle = applicationTitleForSave(parsed, fallbackTitle, file.name);
+          } else if (parsed.setId !== common.setId) {
             throw new ErrorType(`${file.name} belongs to a different dot-code application set`);
           }
           if (indexedPayloads.has(parsed.cardIndex)) {
@@ -503,8 +472,8 @@
           ? "VPK"
           : "RAW";
         return {
-          title: common.title,
-          titleBytes: common.titleBytes,
+          title: applicationTitle.title,
+          titleBytes: applicationTitle.titleBytes,
           region: common.region,
           programType,
           savePrefixSize,

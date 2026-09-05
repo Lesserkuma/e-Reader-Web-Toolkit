@@ -63,7 +63,6 @@
     function rejectContentFile(file, message) {
       state.sourceFiles = state.sourceFiles.filter((candidate) => candidate !== file);
       state.preparedDotcodes.delete(file);
-      state.sourceFileErrors.delete(file);
       if (state.preparedSave?.file === file) state.preparedSave = null;
       appendNotice(`Ignored invalid content input: ${file.name}: ${message}`);
     }
@@ -197,11 +196,8 @@
       if (!file || fileKind(file) !== "SAV" || !state.sourceFiles.includes(file)) {
         return;
       }
-      const preparationId = state.preparationId + 1;
-      state.preparationId = preparationId;
       state.sourceError = "";
       state.sourceNotice = "";
-      state.sourceFileErrors.delete(file);
       state.preparedSave = null;
       renderInputs();
 
@@ -210,22 +206,18 @@
         await nextFrame();
         const bytes = await readFileBytes(file);
         const inspected = saveData.inspect(bytes, file.name);
-        if (state.preparationId === preparationId) {
-          state.preparedSave = {
-            file,
-            bytes,
-            application: inspected.application,
-            calibration: inspected.calibration,
-          };
-          state.inputNotice = [state.inputNotice, inspected.notice].filter(Boolean).join(" ");
-          analyzePreparedDotcodes();
-        }
+        state.preparedSave = {
+          file,
+          bytes,
+          application: inspected.application,
+          calibration: inspected.calibration,
+        };
+        state.inputNotice = [state.inputNotice, inspected.notice].filter(Boolean).join(" ");
+        analyzePreparedDotcodes();
       } catch (error) {
-        if (state.preparationId === preparationId) {
-          const message = error instanceof Error ? error.message : String(error);
-          rejectContentFile(file, message);
-          analyzePreparedDotcodes();
-        }
+        const message = error instanceof Error ? error.message : String(error);
+        rejectContentFile(file, message);
+        analyzePreparedDotcodes();
       }
     }
 
@@ -234,15 +226,12 @@
         ["RAW", "SCAN", "SVG"].includes(fileKind(file)),
       );
       if (incomingFiles.length === 0) return;
-      const preparationId = ++state.preparationId;
       state.sourceError = "";
       state.sourceNotice = "";
       state.preparedApplication = null;
       state.preparedNative = null;
-      for (const file of incomingFiles) state.sourceFileErrors.delete(file);
       renderInputs();
       for (let index = 0; index < incomingFiles.length; index += 1) {
-        if (state.preparationId !== preparationId) return;
         const file = incomingFiles[index];
         const sourceKind = fileKind(file);
         try {
@@ -256,7 +245,7 @@
           let preparedBaseName;
           const scanQualities = new Map();
           const decodePixels = (pixels) =>
-            dotcode.decodeDotcodeImages(pixels, {
+            browserRuntime.decodeDotcodeImages(pixels, dotcode, {
               onStripDecoded: (raw, quality) => scanQualities.set(raw, quality),
             });
           if (sourceKind === "SVG") {
@@ -267,12 +256,12 @@
               setStatus(`Rasterizing SVG dot-code image: ${file.name}…`);
               await nextFrame();
               const pixels = await loadSvgImagePixels(file, svgInput);
-              decodedStrips = decodePixels(pixels);
+              decodedStrips = await decodePixels(pixels);
             }
             preparedBaseName = file.name.replace(/\.svg$/i, "");
           } else if (sourceKind === "SCAN") {
             const pixels = await loadImagePixels(file, scanImageDimensionsForFile);
-            decodedStrips = decodePixels(pixels);
+            decodedStrips = await decodePixels(pixels);
             preparedBaseName = file.name.replace(/\.(?:jpe?g|png)$/i, "");
           } else {
             decodedStrips = [await readFileBytes(file)];
@@ -299,11 +288,9 @@
               scanQuality: scanQualities.get(bytes) || null,
             });
           }
-          if (state.preparationId !== preparationId) return;
           rememberDecodedDotcodes(file, fileEntries);
           state.preparedDotcodes.set(file, fileEntries);
         } catch (error) {
-          if (state.preparationId !== preparationId) return;
           rejectContentFile(file, error instanceof Error ? error.message : String(error));
         }
         renderInputs();
@@ -369,7 +356,6 @@
     return Object.freeze({
       enqueueFiles,
       processFileBatch,
-      drainPendingFileBatches,
     });
   }
 

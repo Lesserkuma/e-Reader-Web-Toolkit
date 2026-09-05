@@ -10,6 +10,45 @@
   "use strict";
 
   const { MAX_IMAGE_PIXELS, MAX_IMAGE_DIMENSION } = limits;
+  const scanWorkerUrl = typeof document === "object" && document.currentScript
+    ? new URL("dotcode_worker.js" + new URL(document.currentScript.src).search, document.currentScript.src).href : null;
+
+  async function decodeDotcodeImages(pixels, decoder, options = {}) {
+    const direct = () => decoder.decodeDotcodeImages(pixels, options);
+    if (!scanWorkerUrl || typeof Worker !== "function") return direct();
+    let worker;
+    try {
+      worker = new Worker(scanWorkerUrl);
+    } catch (_error) {
+      return direct();
+    }
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      function finish(action) {
+        if (settled) return;
+        settled = true;
+        worker.terminate();
+        try { resolve(action()); } catch (error) { reject(error); }
+      }
+      worker.onmessage = ({ data }) => finish(() => {
+        if (data.error) throw new Error(data.error);
+        if (typeof options.onStripDecoded === "function") {
+          data.strips.forEach((raw, i) => options.onStripDecoded(raw, data.qualities[i]));
+        }
+        return data.strips;
+      });
+      worker.onerror = (event) => {
+        event.preventDefault();
+        finish(direct);
+      };
+      worker.onmessageerror = () => finish(direct);
+      try {
+        worker.postMessage({ width: pixels.width, height: pixels.height, data: pixels.data });
+      } catch (_error) {
+        finish(direct);
+      }
+    });
+  }
 
   function wireDropZone(zone, input, onFiles, isBusy) {
     zone.addEventListener("keydown", (event) => {
@@ -118,5 +157,5 @@
     }
   }
 
-  return Object.freeze({ downloadBytes, loadImagePixels, wireDropZone });
+  return Object.freeze({ downloadBytes, loadImagePixels, wireDropZone, decodeDotcodeImages });
 });
