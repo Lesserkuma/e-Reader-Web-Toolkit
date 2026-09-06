@@ -15,6 +15,8 @@
     clearButton: document.querySelector("#clear-button"),
     outputModeToggle: document.querySelector("#output-mode-toggle"),
     saveDataOptions: document.querySelector("#save-data-options"),
+    romOptions: document.querySelector("#rom-options"),
+    emulateAdditionalScans: document.querySelector("#emulate-additional-scans"),
     saveDataWarning: document.querySelector("#save-data-warning"),
     applicationTitle: document.querySelector("#application-title"),
     buildButton: document.querySelector("#build-button"),
@@ -97,6 +99,8 @@
     removeSaveFile: (file) => updateModel("removeSaveFile", file),
     removeSaveComponent: (file, component) => updateModel("removeSaveComponent", file, component),
     removePreparedDotcode: (file, entry) => updateModel("removePreparedDotcode", file, entry),
+    moveContent: (card, target, after) => updateModel("moveContent", card, target, after),
+    shiftContent: (card, direction) => updateModel("shiftContent", card, direction),
     downloadDotcode: output.downloadDotcode,
   });
   browserRuntime.wireDropZone(
@@ -105,6 +109,12 @@
     importer.enqueueFiles,
     () => state.busy,
   );
+  elements.emulateAdditionalScans.addEventListener("change", () => {
+    if (state.busy) return;
+    state.emulateAdditionalScans = elements.emulateAdditionalScans.checked;
+    view.renderInputs();
+    view.refreshInputStatus();
+  });
   elements.clearButton.addEventListener("click", () => updateModel("clearKind", "all"));
   document.querySelectorAll("[data-clear]").forEach((button) => {
     button.addEventListener("click", () => updateModel("clearKind", button.dataset.clear));

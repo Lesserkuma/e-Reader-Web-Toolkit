@@ -9,6 +9,7 @@
       require("./raw_codec.js"),
       require("./save_format.js"),
       require("./application_codec.js"),
+      require("./scan_emulation.js"),
     );
   } else {
     root.EReaderPatcher = factory(
@@ -18,11 +19,12 @@
       root.EReaderRawCodec,
       root.EReaderSaveFormat,
       root.EReaderApplicationCodec,
+      root.EReaderScanEmulation,
     );
   }
 })(
   typeof globalThis !== "undefined" ? globalThis : this,
-  function (binary, cardConstants, titleModule, rawModule, saveModule, applicationModule) {
+  function (binary, cardConstants, titleModule, rawModule, saveModule, applicationModule, scanModule) {
     "use strict";
 
     class PatcherError extends Error {
@@ -35,6 +37,7 @@
     const titles = titleModule.createTitleCodec(PatcherError);
     const saveFormat = saveModule.createSaveFormat(PatcherError, titles);
     const rawCodec = rawModule.createRawCodec(PatcherError);
+    const scanEmulation = scanModule.createScanEmulation(PatcherError, rawCodec);
     const application = applicationModule.createApplicationCodec(
       PatcherError,
       titles,
@@ -89,6 +92,23 @@
     } = application;
     const { encodeRawDotcode, decodeRawDotcodeDetails, decodeRawDotcode } = rawCodec;
     const { RAW_LONG_SIZE, RAW_SHORT_SIZE, RAW_LONG_BIN_SIZE, RAW_SHORT_BIN_SIZE } = rawModule;
+
+    function inspectScanCard(raw, label) {
+      const decoded = decodeRawDotcodeDetails(raw, label);
+      try {
+        return inspectDecodedDotcode(decoded, label);
+      } catch (error) {
+        if (!(error instanceof PatcherError)) throw error;
+        return {
+          region: decoded.region,
+          cardType: decoded.cardType,
+          embeddedTitle: `Type 0x${decoded.cardType.toString(16).toUpperCase().padStart(2, "0")}`,
+          titleEncoding: "none",
+          cardIndex: 1,
+          cardCount: 1,
+        };
+      }
+    }
 
     async function sha256(data) {
       try {
@@ -877,6 +897,9 @@
     }
 
     const constants = Object.freeze({
+      ADDITIONAL_SCAN_OFFSET: scanModule.RAW_OFFSET,
+      ADDITIONAL_SCAN_SLOT_SIZE: scanModule.SLOT_SIZE,
+      MAX_ADDITIONAL_SCANS: scanModule.MAX_CARDS,
       ROM_SIZE,
       SAVE_SIZE,
       SAVE_BANK_SIZE,
@@ -932,6 +955,7 @@
       japaneseShortTitleToShiftJis,
       decodeRawDotcode,
       inspectRawDotcode,
+      inspectScanCard,
       encodeRawDotcode,
       selectRawSet,
       rawFilesToApplication,
@@ -942,6 +966,7 @@
       mappedSaveRead,
       buildNativeDotcodeRom,
       buildPatchedRom,
+      buildAdditionalScanRom: scanEmulation.buildRom,
     });
   },
 );

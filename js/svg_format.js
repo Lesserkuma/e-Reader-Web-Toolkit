@@ -250,7 +250,7 @@
   }
 
   function createMetadataReader(patcher) {
-    const { crc32, inspectRawDotcode } = patcher;
+    const { crc32, inspectScanCard } = patcher;
     function parseRawMetadataCandidate(candidate, label) {
       const { attributes } = candidate;
       const encoding = attributes.get("data-encoding");
@@ -301,7 +301,7 @@
         throw xmlError(label, "the embedded RAW CRC32 does not match its payload");
       }
       try {
-        inspectRawDotcode(raw, `${label} embedded RAW metadata`);
+        inspectScanCard(raw, `${label} embedded RAW metadata`);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         throw xmlError(label, `the embedded RAW strip is invalid (${message})`);

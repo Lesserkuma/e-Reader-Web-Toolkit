@@ -219,6 +219,7 @@
       }
       return {
         app,
+        scanFormat: decoded[3],
         region: app[0] & 0x0f,
         cardType: ((decoded[3] & 1) << 4) | (app[1] >>> 4),
       };

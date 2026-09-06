@@ -23,7 +23,7 @@
     if (
       !patcher ||
       typeof patcher.asBytes !== "function" ||
-      typeof patcher.inspectRawDotcode !== "function" ||
+      typeof patcher.inspectScanCard !== "function" ||
       typeof patcher.crc32 !== "function" ||
       typeof patcher.bytesToHex !== "function" ||
       typeof patcher.PatcherError !== "function" ||

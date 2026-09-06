@@ -27,10 +27,10 @@
   };
 
   function createSvgRenderer(patcher) {
-    const { PatcherError, asBytes, inspectRawDotcode, crc32, bytesToHex } = patcher;
+    const { PatcherError, asBytes, inspectScanCard, crc32, bytesToHex } = patcher;
     function rawDotcodeToSvg(rawInput, label = "RAW input", options = {}) {
       const raw = asBytes(rawInput, "RAW input");
-      const metadata = inspectRawDotcode(raw, label);
+      const metadata = inspectScanCard(raw, label);
       const embeddedTitle =
         metadata.titleEncoding !== "none" && metadata.titleEncoding !== "generic card-type name"
           ? metadata.embeddedTitle

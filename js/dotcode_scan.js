@@ -44,6 +44,8 @@
 
     const LOCATOR_MAX_DIMENSION = 1_600;
 
+    const LOCATOR_DETAIL_MAX_DIMENSION = 3_200;
+
     const MAX_NORMALIZED_PIXELS = 20_000_000;
 
     const MAX_COARSE_MARKER_CANDIDATES = 768;
@@ -55,8 +57,6 @@
     const MAX_MARKER_GRIDS_PER_THRESHOLD = 96;
 
     const MAX_LOCATED_MARKER_GRIDS = 64;
-
-    const MAX_RECOVERY_ATTEMPTS = 8;
 
     const JPEG_START_OF_FRAME_MARKERS = new Set([
       0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf,
@@ -218,12 +218,12 @@
       return 255;
     }
 
-    function locatorImage(image) {
+    function locatorImage(image, dimension = LOCATOR_MAX_DIMENSION) {
       const maximumDimension = Math.max(image.width, image.height);
-      if (maximumDimension <= LOCATOR_MAX_DIMENSION) {
+      if (maximumDimension <= dimension) {
         return { image, scaleX: 1, scaleY: 1 };
       }
-      const previewScale = LOCATOR_MAX_DIMENSION / maximumDimension;
+      const previewScale = dimension / maximumDimension;
       const width = Math.max(1, Math.round(image.width * previewScale));
       const height = Math.max(1, Math.round(image.height * previewScale));
       const scaleX = image.width / width;
@@ -1536,23 +1536,43 @@
       return { width, height, data, redOnly: true };
     }
 
-    function decodeLocatedDotcodeImages(rgba) {
-      const locator = locatorImage(rgba);
-      const errors = [];
+    function locateImageMarkerGrids(rgba, errors = []) {
       let coarseGrids = [];
-      try {
-        coarseGrids = locateSyncMarkerGrids(locator.image).map((grid) =>
-          scaleMarkerGrid(grid, locator.scaleX, locator.scaleY),
-        );
-      } catch (error) {
-        if (!(error instanceof DotcodeScanError)) {
-          throw error;
+      const maximumDimension = Math.max(rgba.width, rgba.height);
+      const dimensions = new Set(
+        [LOCATOR_MAX_DIMENSION, LOCATOR_DETAIL_MAX_DIMENSION].map((limit) =>
+          Math.min(limit, maximumDimension),
+        ),
+      );
+      // Keep both scales: smaller disks can disappear in the coarse preview,
+      // while larger disks can be lost among artwork at the finer scale.
+      for (const dimension of dimensions) {
+        const locator = locatorImage(rgba, dimension);
+        try {
+          const grids = locateSyncMarkerGrids(locator.image);
+          coarseGrids = deduplicateMarkerGrids([
+            ...coarseGrids,
+            ...grids.map((grid) => scaleMarkerGrid(grid, locator.scaleX, locator.scaleY)),
+          ]);
+        } catch (error) {
+          if (!(error instanceof DotcodeScanError)) {
+            throw error;
+          }
+          errors.push(error.message);
         }
-        errors.push(error.message);
       }
+      if (coarseGrids.length > MAX_LOCATED_MARKER_GRIDS) {
+        coarseGrids.sort((left, right) => left.score - right.score);
+        coarseGrids.length = MAX_LOCATED_MARKER_GRIDS;
+      }
+      return coarseGrids;
+    }
+
+    function decodeLocatedDotcodeImages(rgba) {
+      const errors = [];
+      const coarseGrids = locateImageMarkerGrids(rgba, errors);
       const decoded = [];
       let recoverySession;
-      let recoveryAttempts = 0;
       for (const grid of coarseGrids) {
         let candidate;
         try {
@@ -1600,7 +1620,7 @@
           const top = markers.top.map(candidate.image.toSourcePoint);
           const bottom = markers.bottom.map(candidate.image.toSourcePoint);
           const pitch = Math.hypot(top[1].x - top[0].x, top[1].y - top[0].y) / 35;
-          if (pitch >= 1.25 && pitch <= 2.75 && recoveryAttempts < MAX_RECOVERY_ATTEMPTS) {
+          if (pitch >= 1.25 && pitch <= 2.75) {
             recoverySession ||= recovery.createSession(rgba);
             const reversedTop = top.slice().reverse();
             const reversedBottom = bottom.slice().reverse();
@@ -1608,8 +1628,6 @@
               [top, bottom], [reversedBottom, reversedTop],
               [reversedTop, reversedBottom], [bottom, top],
             ]) {
-              if (recoveryAttempts >= MAX_RECOVERY_ATTEMPTS) break;
-              recoveryAttempts++;
               try {
                 const result = recoverySession.decode(first, second);
                 if (!result) continue;

@@ -59,7 +59,6 @@
         );
       }
 
-      let notice = "";
       const rawEntries = [];
       if (metadata) {
         try {
@@ -74,16 +73,14 @@
               metadata: patcher.inspectRawDotcode(raw, name),
             });
           }
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          notice = "Dot-code data downloads are unavailable for this SAV: " + message;
+        } catch {
+          rawEntries.length = 0;
         }
       }
 
       return {
         application: metadata ? { metadata, rawEntries } : null,
         calibration,
-        notice,
       };
     }
 
