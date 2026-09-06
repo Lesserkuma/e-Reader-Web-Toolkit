@@ -12,6 +12,7 @@
     "raw_codec.js",
     "save_format.js",
     "application_codec.js",
+    "scan_emulation.js",
     "patcher.js",
     "dotcode_math.js",
     "dotcode_sampling.js",

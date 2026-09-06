@@ -18,6 +18,134 @@
       selectedApplicationIsReady,
     } = model;
     const { formatBytes, dotcodeDataFilename } = fileServices;
+    let draggedCard = null;
+    let copyFeedback = null;
+    let copyTimer = 0;
+    let copyRequest = 0;
+
+    function clearCopyFeedback() {
+      window.clearTimeout(copyTimer);
+      copyTimer = 0;
+      if (copyFeedback) copyFeedback.textContent = "";
+      copyFeedback = null;
+    }
+
+    elements.contentFileRows.addEventListener("click", async (event) => {
+      const button = event.target.closest(".crc32-copy");
+      if (!button || !elements.contentFileRows.contains(button)) return;
+      const request = ++copyRequest;
+      clearCopyFeedback();
+      try {
+        await navigator.clipboard.writeText(button.textContent);
+      } catch (_error) {
+        return;
+      }
+      if (request !== copyRequest || !button.isConnected) return;
+      copyFeedback = button.nextElementSibling;
+      copyFeedback.textContent = "Copied to clipboard";
+      copyTimer = window.setTimeout(clearCopyFeedback, 1600);
+    });
+
+    function clearDropPosition() {
+      elements.contentFileRows.querySelectorAll("[data-drop-position]").forEach((row) => {
+        delete row.dataset.dropPosition;
+      });
+    }
+
+    function wireContentDrag(row, card) {
+      row.draggable = !state.busy && !state.preparing;
+      row.addEventListener("dragstart", (event) => {
+        if (state.busy || state.preparing || event.target.closest("button")) {
+          event.preventDefault();
+          return;
+        }
+        draggedCard = card;
+        row.dataset.dragging = "true";
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("application/x-ereader-content", row.dataset.contentIndex);
+      });
+      row.addEventListener("dragover", (event) => {
+        if (!draggedCard || state.busy || state.preparing) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        clearDropPosition();
+        if (model.contentGroups().some((group) => group.includes(card) && group.includes(draggedCard))) return;
+        const bounds = row.getBoundingClientRect();
+        row.dataset.dropPosition = event.clientY < bounds.top + bounds.height / 2 ? "before" : "after";
+      });
+      row.addEventListener("dragleave", (event) => {
+        if (!row.contains(event.relatedTarget)) delete row.dataset.dropPosition;
+      });
+      row.addEventListener("drop", (event) => {
+        if (!draggedCard) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const source = draggedCard;
+        const after = row.dataset.dropPosition === "after";
+        draggedCard = null;
+        clearDropPosition();
+        animateContentMove(() => actions.moveContent(source, card, after));
+      });
+      row.addEventListener("dragend", () => {
+        draggedCard = null;
+        delete row.dataset.dragging;
+        clearDropPosition();
+      });
+    }
+
+    function contentRowPositions() {
+      const top = elements.contentFileRows.getBoundingClientRect().top;
+      return new Map(Array.from(elements.contentFileRows.querySelectorAll("[data-content-index]"), (row) => [
+        state.contentOrder[Number(row.dataset.contentIndex)],
+        { row, top: row.getBoundingClientRect().top - top },
+      ]));
+    }
+
+    function animateContentMove(update) {
+      const previousPositions = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? null : contentRowPositions();
+      update();
+      if (!previousPositions) return;
+      for (const [entry, current] of contentRowPositions()) {
+        const previous = previousPositions.get(entry);
+        if (!previous || previous.top === current.top) continue;
+        current.row.animate([
+          { transform: `translateY(${previous.top - current.top}px)` },
+          { transform: "translateY(0)" },
+        ], { duration: 180, easing: "ease-out" });
+      }
+    }
+
+    function contentOrderButtons(card, groups) {
+      const controls = document.createElement("span");
+      controls.className = "content-order-actions";
+      const handle = document.createElement("span");
+      handle.className = "content-drag-handle";
+      handle.textContent = "⠿";
+      handle.title = "Drag to reorder content";
+      handle.setAttribute("aria-hidden", "true");
+      controls.append(handle);
+      const index = groups.findIndex((group) => group.includes(card));
+      for (const [direction, label, arrow] of [[-1, "up", "↑"], [1, "down", "↓"]]) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = `ghost-button content-shift-button content-shift-${label}`;
+        button.textContent = arrow;
+        button.title = `Move content ${label}`;
+        button.setAttribute("aria-label", `Move ${card.entry.metadata.embeddedTitle || card.file.name} ${label}`);
+        button.disabled = state.busy || state.preparing || !groups[index + direction];
+        button.addEventListener("click", () => animateContentMove(() => {
+          actions.shiftContent(card, direction);
+          const position = state.contentOrder.indexOf(card);
+          const row = elements.contentFileRows.querySelector(`[data-content-index="${position}"]`);
+          const preferred = row.querySelector(`.content-shift-${label}`);
+          (preferred.disabled ? row.querySelector(".content-shift-button:not(:disabled)") : preferred)?.focus({ preventScroll: true });
+          row.scrollIntoView({ block: "nearest", inline: "nearest" });
+        }));
+        controls.append(button);
+      }
+      return controls;
+    }
 
     function setStatus(message, tone = "") {
       elements.status.textContent = message || "\u00a0";
@@ -63,7 +191,12 @@
     }
 
     function renderContentFileRows() {
+      draggedCard = null;
+      copyRequest++;
+      clearCopyFeedback();
       const contentItems = model.contentItems();
+      const groups = model.contentGroups();
+      const showScans = !isSaveDataMode() && state.emulateAdditionalScans;
       const hasContentItems = contentItems.length > 0;
       elements.contentListHeading.hidden = !hasContentItems;
       elements.contentFileTable.hidden = !hasContentItems;
@@ -76,10 +209,41 @@
       elements.removeHeading.hidden = !showRemoveActions;
       elements.contentFileTable.classList.toggle("has-data", showDataDownloads);
       elements.contentFileTable.classList.toggle("has-remove", showRemoveActions);
-      const rows = contentItems.map(({ file, entry, contentKind, details, removeAction }, rowIndex) => {
+      const columnCount = 3 + (showDataDownloads ? 2 : 0) + (showRemoveActions ? 1 : 0);
+      let mainHeadingShown = false;
+      let scanHeadingShown = false;
+      const sectionHeading = (label, description = "") => {
+        const divider = document.createElement("tr");
+        divider.className = "scan-divider";
+        const cell = document.createElement("td");
+        cell.colSpan = columnCount;
+        const heading = document.createElement("div");
+        heading.className = "scan-divider-heading";
+        const title = document.createElement("h3");
+        title.textContent = label;
+        heading.append(title);
+        if (description) {
+          const count = document.createElement("span");
+          count.className = "option-description";
+          count.textContent = description;
+          heading.append(count);
+        }
+        cell.append(heading);
+        divider.append(cell);
+        return divider;
+      };
+      const scanHeading = () => sectionHeading("Emulated Addional Card Scans",
+        `${model.additionalScanEntries().length} / ${model.additionalScanCapacity()} strips`);
+      const rows = contentItems.flatMap(({ file, entry, card, contentKind, details, removeAction, role }, rowIndex) => {
         const row = document.createElement("tr");
         row.dataset.state = details.state;
         row.dataset.contentKind = contentKind;
+        row.dataset.contentRole = role;
+        row.classList.toggle("content-inactive", role === "inactive" || (role === "additional" && !showScans));
+        if (card) {
+          row.dataset.contentIndex = state.contentOrder.indexOf(card);
+          wireContentDrag(row, card);
+        }
         const contentCellText =
           details.index === "\u2014" || details.count === "\u2014"
             ? details.title
@@ -94,6 +258,15 @@
           cell.dataset.field = field;
           cell.textContent = value;
           cell.title = value;
+          if (field === "filename" && card) {
+            const wrapper = document.createElement("div");
+            wrapper.className = "content-filename";
+            const filename = document.createElement("span");
+            filename.className = "content-filename-text";
+            filename.textContent = value;
+            wrapper.append(contentOrderButtons(card, groups), filename);
+            cell.replaceChildren(wrapper);
+          }
           row.append(cell);
         }
         if (showDataDownloads) {
@@ -111,8 +284,22 @@
           const checksumCell = document.createElement("td");
           checksumCell.className = "crc32-column";
           checksumCell.dataset.field = "crc32";
-          checksumCell.textContent = details.crc32;
           checksumCell.title = details.crc32;
+          if (entry) {
+            const control = document.createElement("span");
+            control.className = "crc32-copy-control";
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "crc32-copy";
+            button.textContent = details.crc32;
+            button.title = "";
+            button.setAttribute("aria-label", `Copy CRC32 ${details.crc32} to clipboard`);
+            const feedback = document.createElement("span");
+            feedback.className = "crc32-copy-feedback";
+            feedback.setAttribute("role", "status");
+            control.append(button, feedback);
+            checksumCell.append(control);
+          } else checksumCell.textContent = details.crc32;
           if (entry?.scanQuality?.uncertainFillerBytes.length) {
             const quality = entry.scanQuality;
             const uncertainCount = quality.uncertainFillerBytes.length;
@@ -193,6 +380,7 @@
               contentLabel = `saved card content from ${file.name}`;
             } else if (removeAction === "save-file") {
               contentLabel = `SAV source file ${file.name}`;
+
             } else if (details.title === "\u2014") {
               contentLabel = `dot code from ${file.name}`;
             } else {
@@ -205,6 +393,7 @@
                 actions.removePreparedDotcode(file, entry);
               } else if (removeAction === "save-file") {
                 actions.removeSaveFile(file);
+
               } else {
                 actions.removeSaveComponent(
                   file,
@@ -216,23 +405,32 @@
           }
           row.append(removeCell);
         }
-        return row;
+        if (showScans && role === "main" && !mainHeadingShown) {
+          mainHeadingShown = true;
+          return [sectionHeading("Main content"), row];
+        }
+        if (showScans && role === "additional" && !scanHeadingShown) {
+          scanHeadingShown = true;
+          return [scanHeading(), row];
+        }
+        return [row];
       });
+      if (showScans && mainHeadingShown && !scanHeadingShown) rows.push(scanHeading());
       elements.contentFileRows.replaceChildren(...rows);
     }
 
     function renderOptions() {
       const saveDataMode = isSaveDataMode();
-      const usingDotcodeContent = selectedDotcodeFiles().length > 0;
-      const currentTitle =
-        (usingDotcodeContent
-          ? state.preparedApplication?.title || state.preparedNative?.metadata?.embeddedTitle
-          : state.preparedSave?.application?.metadata?.title) || "Application title";
+      const currentTitle = state.mainSave?.application.metadata.title ||
+        state.preparedApplication?.title || state.preparedNative?.metadata.embeddedTitle || "Application title";
       elements.outputModeToggle.setAttribute("aria-checked", String(saveDataMode));
       elements.outputModeToggle.disabled = state.busy;
       elements.romSelection.hidden = saveDataMode;
       elements.saveDataOptions.hidden = !saveDataMode;
-      elements.saveDataWarning.hidden = Boolean(state.preparedSave?.calibration);
+      elements.romOptions.hidden = saveDataMode;
+      elements.emulateAdditionalScans.checked = state.emulateAdditionalScans;
+      elements.emulateAdditionalScans.disabled = state.busy;
+      elements.saveDataWarning.hidden = Boolean(model.selectedCalibration());
       elements.applicationTitle.disabled = state.busy;
       elements.applicationTitle.placeholder = currentTitle;
       elements.applicationTitle.setAttribute("aria-invalid", String(Boolean(state.optionError)));
@@ -285,6 +483,7 @@
           !state.sourceError &&
           !state.sourceNotice &&
           !state.optionError &&
+          !model.additionalScanIssue() &&
           !state.preparing &&
           !state.busy,
       );
@@ -312,13 +511,14 @@
         setStatus(state.sourceNotice, "warning");
       } else if (state.inputNotice) {
         setStatus(state.inputNotice, "warning");
+
       } else if (isSaveDataMode() && state.preparedNative) {
         setStatus(
           "This card type cannot be stored as an e-Reader saved application. Use ROM output instead.",
           "warning",
         );
       } else if (isSaveDataMode() && !selectedApplicationIsReady()) {
-        if (state.preparedSave?.calibration && selectedDotcodeFiles().length === 0) {
+        if (model.selectedCalibration() && state.contentOrder.length === 0) {
           setStatus("Calibration data imported. Add RAW strips or dot-code images to continue.");
         } else {
           setStatus("Add a SAV with an application, RAW strips, or dot-code images to continue.");
@@ -333,6 +533,8 @@
         setStatus("Add a SAV, RAW strips, or dot-code images to continue.");
       } else if (!selectedApplicationIsReady()) {
         setStatus("Add application content to continue.");
+      } else if (model.additionalScanIssue()) {
+        setStatus(model.additionalScanIssue(), "warning");
       } else {
         setStatus("Inputs are complete and validated. Ready to build.");
       }

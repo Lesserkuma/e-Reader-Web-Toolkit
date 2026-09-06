@@ -743,7 +743,24 @@
       pair,
       neighbors,
       constant,
-      coupledSymbols: [...coupled].map((value) => value.split(",").map(Number)),
+      coupledSymbols: [...coupled].map((value) => {
+        const [symbolA, symbolB] = value.split(",").map(Number);
+        const offsetA = symbolA * 5;
+        const offsetB = symbolB * 5;
+        // Pair interactions stay fixed across every search pass and starting state.
+        const cross = new Float64Array(16 * 16);
+        for (let a = 0; a < 16; a++) {
+          for (let b = 0; b < 16; b++) {
+            let cost = 0;
+            for (let i = 0; i < 5; i++) {
+              for (let j = 0; j < 5; j++)
+                cost += pair[offsetA + i][offsetB + j] * SYMBOL_BITS[a][i] * SYMBOL_BITS[b][j];
+            }
+            cross[a * 16 + b] = cost;
+          }
+        }
+        return { symbolA, symbolB, cross };
+      }),
     };
   }
 
@@ -797,18 +814,11 @@
 
   function improveCoupledSymbols(objective, labels, raw, fillerStart) {
     let changes = 0;
-    for (const [symbolA, symbolB] of objective.coupledSymbols) {
+    for (const { symbolA, symbolB, cross } of objective.coupledSymbols) {
       const offsetA = symbolA * 5;
       const offsetB = symbolB * 5;
       const costsA = symbolCosts(objective, labels, offsetA, offsetB);
       const costsB = symbolCosts(objective, labels, offsetB, offsetA);
-      const cross = Array.from({ length: 16 }, (_, a) => Float64Array.from({ length: 16 }, (_, b) => {
-        let cost = 0;
-        for (let i = 0; i < 5; i++) {
-          for (let j = 0; j < 5; j++) cost += objective.pair[offsetA + i][offsetB + j] * SYMBOL_BITS[a][i] * SYMBOL_BITS[b][j];
-        }
-        return cost;
-      }));
       const atA = fillerStart + (symbolA >>> 1);
       const atB = fillerStart + (symbolB >>> 1);
       const shiftA = symbolA % 2 ? 0 : 4;
@@ -817,10 +827,10 @@
       const oldB = (raw[atB] >>> shiftB) & 15;
       let bestA = oldA;
       let bestB = oldB;
-      let bestCost = costsA[oldA] + costsB[oldB] + cross[oldA][oldB];
+      let bestCost = costsA[oldA] + costsB[oldB] + cross[oldA * 16 + oldB];
       for (let a = 0; a < 16; a++) {
         for (let b = 0; b < 16; b++) {
-          const cost = costsA[a] + costsB[b] + cross[a][b];
+          const cost = costsA[a] + costsB[b] + cross[a * 16 + b];
           if (cost < bestCost - 1e-8) {
             bestCost = cost;
             bestA = a;

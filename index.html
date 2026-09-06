@@ -7,8 +7,8 @@
     <meta name="theme-color" content="#0d0f1a">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'">
     <title>e-Reader Web Toolkit</title>
-    <link rel="stylesheet" href="css/styles.css?7">
-    <script src="js/loader.js?3" defer></script>
+    <link rel="stylesheet" href="css/styles.css?8">
+    <script src="js/loader.js?4" defer></script>
   </head>
   <body>
     <div class="page-shell">
@@ -27,49 +27,10 @@
             <div class="drop-icon" aria-hidden="true">📂</div>
             <div>
               <h2>Drop files here or click to browse</h2>
-              <p>Add one <code>.sav</code>, one or more <code>.raw</code> codes, or one or more <code>.jpg</code>/<code>.png</code>/<code>.svg</code> images containing dot codes. For ROM output, also add a supported e-Reader <code>.gba</code> ROM.<br>Supported files may also be supplied in a <code>.zip</code> archive.</p>
+              <p>Add <code>.sav</code> files, one or more <code>.raw</code> codes, or one or more <code>.jpg</code>/<code>.png</code>/<code>.svg</code> images containing dot codes. For ROM output, also add a supported e-Reader <code>.gba</code> ROM.<br>Supported files may also be supplied in a <code>.zip</code> archive.</p>
             </div>
           </label>
           <input id="file-input" type="file" accept=".gba,.sav,.raw,.jpg,.jpeg,.png,.svg,.zip" multiple hidden>
-        </section>
-
-        <section class="panel files-panel" aria-labelledby="files-title">
-          <div class="panel-heading">
-            <h2 id="files-title"><span aria-hidden="true">📁</span> Selected files</h2>
-            <button id="clear-button" class="ghost-button" type="button" disabled>Clear files</button>
-          </div>
-
-          <div class="file-list">
-            <article id="rom-selection" class="file-card" data-state="empty">
-              <div class="file-column">
-                <span class="file-kind">Base ROM</span>
-                <strong class="file-name">No ROM selected.</strong>
-                <span class="file-detail">Supported: <b>e-Reader (USA)</b> or <b>Card e-Reader+ (Japan)</b></span>
-              </div>
-              <span class="status-badge">Missing</span>
-              <button class="ghost-button small" type="button" data-clear="rom" aria-label="Remove base ROM" hidden>Remove</button>
-            </article>
-          </div>
-
-          <div id="content-list-heading" class="content-list-heading" hidden>
-            <h3 id="content-list-title">Content list</h3>
-            <button id="clear-content-button" class="ghost-button" type="button" data-clear="source" hidden>Clear content</button>
-          </div>
-          <div id="content-file-table" class="content-file-table" hidden>
-            <table aria-labelledby="content-list-title">
-              <thead>
-                <tr>
-                  <th scope="col">File</th>
-                  <th scope="col">Region</th>
-                  <th scope="col">Content</th>
-                  <th id="data-heading" class="data-column" scope="col" hidden>Export</th>
-                  <th id="crc32-heading" class="crc32-column" scope="col" hidden>Raw CRC32</th>
-                  <th id="remove-heading" class="remove-column" scope="col" aria-label="Remove content" hidden></th>
-                </tr>
-              </thead>
-              <tbody id="content-file-rows" aria-live="polite"></tbody>
-            </table>
-          </div>
         </section>
 
         <section id="options-panel" class="panel options-panel" aria-labelledby="options-title">
@@ -97,6 +58,16 @@
             </button>
           </div>
 
+          <div id="rom-options" class="rom-options">
+            <label class="option-row" for="emulate-additional-scans">
+              <span class="option-copy">
+                <span id="additional-scans-label" class="option-label">Emulate additional card scans</span>
+                <span id="additional-scans-description" class="option-description">Supply embedded cards automatically when the running content requests a scan.</span>
+              </span>
+              <input id="emulate-additional-scans" type="checkbox" role="switch" aria-labelledby="additional-scans-label" aria-describedby="additional-scans-description" aria-controls="content-file-table">
+            </label>
+          </div>
+
           <div id="save-data-options" class="save-data-options" hidden>
             <aside id="save-data-warning" class="save-data-warning" role="alert">
               <span class="warning-icon" aria-hidden="true">⚠️</span>
@@ -117,6 +88,45 @@
           </div>
         </section>
 
+        <section class="panel files-panel" aria-labelledby="files-title">
+          <div class="panel-heading">
+            <h2 id="files-title"><span aria-hidden="true">📁</span> Selected files</h2>
+            <button id="clear-button" class="ghost-button" type="button" disabled>Clear files</button>
+          </div>
+
+          <div class="file-list">
+            <article id="rom-selection" class="file-card" data-state="empty">
+              <div class="file-column">
+                <span class="file-kind">Base ROM</span>
+                <strong class="file-name">No ROM selected.</strong>
+                <span class="file-detail">Supported: <b>e-Reader (USA)</b> or <b>Card e-Reader+ (Japan)</b></span>
+              </div>
+              <span class="status-badge">Missing</span>
+              <button class="ghost-button small" type="button" data-clear="rom" aria-label="Remove base ROM" hidden>Remove</button>
+            </article>
+          </div>
+
+          <div id="content-list-heading" class="content-list-heading" hidden>
+            <h3 id="content-list-title">Content list</h3>
+            <button id="clear-content-button" class="ghost-button" type="button" data-clear="source" hidden>Clear content</button>
+          </div>
+          <div id="content-file-table" class="content-file-table" hidden>
+            <table aria-labelledby="content-list-title" aria-describedby="content-order-help">
+              <thead>
+                <tr>
+                  <th scope="col">File</th>
+                  <th scope="col">Region</th>
+                  <th scope="col">Content</th>
+                  <th id="data-heading" class="data-column" scope="col" hidden>Export</th>
+                  <th id="crc32-heading" class="crc32-column" scope="col" hidden>Raw CRC32</th>
+                  <th id="remove-heading" class="remove-column" scope="col" aria-label="Remove content" hidden></th>
+                </tr>
+              </thead>
+              <tbody id="content-file-rows" aria-live="polite"></tbody>
+            </table>
+          </div>
+        </section>
+
         <section class="action-bar" aria-label="Build and download">
           <button id="build-button" type="button" class="primary-button" disabled>
             <span class="button-idle">Build Standalone ROM</span>
@@ -129,7 +139,7 @@
       </main>
 
       <footer>
-        <div><b>e-Reader Web Toolkit v1.2</b> by Lesserkuma<br><small>AI disclosure: Developed with assistance from GPT-6<br>Source code available on <a href="https://github.com/Lesserkuma/e-Reader-Web-Toolkit" target="_blank">GitHub</a></small></div>
+        <div><b>e-Reader Web Toolkit v1.3</b><br><small>AI disclosure: Developed with assistance from GPT-6<br>Source code available on <a href="https://github.com/Lesserkuma/e-Reader-Web-Toolkit" target="_blank">GitHub</a></small></div>
         <div>
           Technical references and validation:<br>
           <a href="https://www.problemkaputt.de/gbatek.txt" target="_blank" rel="noopener noreferrer">GBATEK Technical Info</a> by Martin Korth<br>

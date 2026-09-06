@@ -20,16 +20,17 @@
     svgServices,
     nextFrame,
   }) {
-    const { state, selectedSaveFiles, selectedDotcodeFiles, isSaveDataMode } = model;
+    const { state, isSaveDataMode } = model;
     const { setStatus, renderInputs } = view;
     const { safeFilename } = fileServices;
     const { downloadBytes } = browserRuntime;
     const { rawDotcodeToSvg } = svgServices;
 
     function loadSource() {
-      const saveFiles = selectedSaveFiles();
-      const dotcodeFiles = selectedDotcodeFiles();
-      if (dotcodeFiles.length > 0) {
+      if (state.mainSave) {
+        return { save: state.mainSave.bytes, metadata: state.mainSave.application.metadata };
+      }
+      if (state.mainCards.length > 0) {
         if (state.preparedNative) {
           return {
             nativeRaw: state.preparedNative.bytes,
@@ -50,22 +51,6 @@
             applicationRegion: application.region === 1 ? "usa" : "japan",
             scanRegion: application.region,
           },
-        };
-      }
-
-      if (saveFiles.length === 1) {
-        if (state.preparedSave?.file !== saveFiles[0]) {
-          throw new Error("The save file has not finished validating.");
-        }
-        if (!state.preparedSave.application) {
-          throw new Error(
-            "The selected SAV contains calibration data but no saved application. " +
-              "Add RAW strips or dot-code images to continue.",
-          );
-        }
-        return {
-          save: state.preparedSave.bytes,
-          metadata: state.preparedSave.application.metadata,
         };
       }
 
@@ -126,7 +111,7 @@
             sourceSave: source.save,
             applicationMetadata: source.metadata,
             fallbackRegion: state.preparedRom?.profile?.key || null,
-            calibration: state.preparedSave?.calibration || null,
+            calibration: model.selectedCalibration(),
             title: hasConfiguredTitle ? configuredTitle : "",
           });
           const title = hasConfiguredTitle ? configuredTitle : source.metadata.title;
@@ -151,6 +136,24 @@
             )
           : await patcher.buildPatchedRom(romBytes, source.save, source.metadata.applicationRegion);
         const metadata = { ...source.metadata, ...built.metadata };
+        if (state.emulateAdditionalScans && model.additionalScanEntries().length) {
+          setStatus("Embedding additional card scans…");
+          await nextFrame();
+          try {
+            const offset = patcher.constants.ADDITIONAL_SCAN_OFFSET +
+              (source.nativeRaw ? patcher.constants.ADDITIONAL_SCAN_SLOT_SIZE : 0);
+            built.rom = await patcher.buildAdditionalScanRom(
+              built.rom,
+              model.additionalScanEntries(),
+              offset,
+            );
+          } catch (error) {
+            state.additionalScanError = error instanceof Error ? error.message : String(error);
+            setStatus(`Error: ${state.additionalScanError}`, "error");
+            elements.status.focus({ preventScroll: true });
+            return;
+          }
+        }
         const baseName = safeFilename(metadata.title, "e-Reader application");
         const romFilename = `${baseName}.gba`;
         downloadBytes(built.rom, romFilename, "application/octet-stream");

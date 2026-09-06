@@ -11,27 +11,31 @@
 
   function createAppModel(patcher, fileServices) {
     const { fileKind, createDotcodeIndex } = fileServices;
-
     const state = {
       romFile: null,
       preparedRom: null,
       sourceFiles: [],
+      preparedSaves: new Map(),
+      preparedDotcodes: new Map(),
+      contentOrder: [],
+      mainCards: [],
+      mainSave: null,
+      preparedApplication: null,
+      preparedNative: null,
       romError: "",
       compatibilityError: "",
       optionError: "",
       sourceError: "",
       sourceNotice: "",
       inputNotice: "",
+      additionalScanError: "",
       preparing: false,
-      preparedDotcodes: new Map(),
-      preparedApplication: null,
-      preparedNative: null,
-      preparedSave: null,
       pendingFileBatches: [],
       drainingFileBatches: false,
       busy: false,
       outputMode: "rom",
       applicationTitle: "",
+      emulateAdditionalScans: false,
     };
 
     function isSaveDataMode() {
@@ -39,13 +43,15 @@
     }
 
     function regionLabel(region) {
-      return region === 1 || region === "usa" ? "English" : "Japanese";
+      if (region === 1 || region === "usa") return "English";
+      if ([0, 2, "japan"].includes(region)) return "Japanese";
+      return `Unknown (${region})`;
     }
 
     function queuedContentFiles() {
-      return state.pendingFileBatches
-        .flatMap((batch) => batch)
-        .filter((file) => ["SAV", "RAW", "SCAN", "SVG"].includes(fileKind(file)));
+      return state.pendingFileBatches.flat().filter((file) =>
+        ["SAV", "RAW", "SCAN", "SVG"].includes(fileKind(file)),
+      );
     }
 
     function selectedSaveFiles() {
@@ -56,34 +62,113 @@
       return state.sourceFiles.filter((file) => ["RAW", "SCAN", "SVG"].includes(fileKind(file)));
     }
 
-    function selectedApplicationIsReady() {
-      const dotcodeFiles = selectedDotcodeFiles();
-      if (dotcodeFiles.length > 0) {
-        return Boolean(state.preparedApplication || state.preparedNative);
+    function selectedCalibration() {
+      for (const file of selectedSaveFiles()) {
+        const calibration = state.preparedSaves.get(file)?.calibration;
+        if (calibration) return calibration;
       }
-      const saveFiles = selectedSaveFiles();
-      return Boolean(
-        saveFiles.length === 1 &&
-          state.preparedSave?.file === saveFiles[0] &&
-          state.preparedSave.application,
-      );
+      return null;
+    }
+
+    function selectedApplicationIsReady() {
+      return Boolean(state.mainSave || state.preparedApplication || state.preparedNative);
     }
 
     function resetContentErrors() {
+      state.additionalScanError = "";
       state.compatibilityError = "";
       state.optionError = "";
       state.sourceError = "";
       state.sourceNotice = "";
     }
 
+    function contentGroups() {
+      const groups = [];
+      const applications = new Map();
+      for (const card of state.contentOrder) {
+        const metadata = card.entry.metadata;
+        const key = metadata.contentKind === "application" ? metadata.setId : null;
+        if (key && applications.has(key)) {
+          applications.get(key).push(card);
+        } else {
+          const group = [card];
+          groups.push(group);
+          if (key) applications.set(key, group);
+        }
+      }
+      return groups;
+    }
+
+    function syncContentOrder() {
+      const available = new Map(state.sourceFiles.flatMap((file) =>
+        (state.preparedDotcodes.get(file) || []).map((entry) => [entry, file]),
+      ));
+      state.contentOrder = state.contentOrder.filter(({ entry }) => available.has(entry));
+      const retained = new Set(state.contentOrder.map(({ entry }) => entry));
+      for (const [entry, file] of available) {
+        if (!retained.has(entry)) state.contentOrder.push({ file, entry });
+      }
+      state.contentOrder = contentGroups().flat();
+    }
+
+    function additionalScanEntries() {
+      const main = new Set(state.mainCards);
+      return state.contentOrder.filter((card) => !main.has(card)).map(({ entry }) => entry);
+    }
+
+    function moveContent(card, target, after = false) {
+      if (state.busy || state.preparing) return;
+      const groups = contentGroups();
+      const sourceGroup = groups.find((group) => group.includes(card));
+      const targetGroup = groups.find((group) => group.includes(target));
+      if (!sourceGroup || !targetGroup || sourceGroup === targetGroup) return;
+      groups.splice(groups.indexOf(sourceGroup), 1);
+      groups.splice(groups.indexOf(targetGroup) + (after ? 1 : 0), 0, sourceGroup);
+      state.contentOrder = groups.flat();
+      resetContentErrors();
+      state.inputNotice = "";
+      analyzePreparedDotcodes();
+      return true;
+    }
+
+    function shiftContent(card, direction) {
+      if (![-1, 1].includes(direction)) return;
+      const groups = contentGroups();
+      const index = groups.findIndex((group) => group.includes(card));
+      const target = groups[index + direction];
+      if (index < 0 || !target) return;
+      return moveContent(card, target[0], direction === 1);
+    }
+
+    function additionalScanCapacity() {
+      return patcher.constants.MAX_ADDITIONAL_SCANS - (state.preparedNative ? 1 : 0);
+    }
+
+    function additionalScanIssue() {
+      if (isSaveDataMode() || !state.emulateAdditionalScans) return "";
+      if (state.additionalScanError) return state.additionalScanError;
+      const count = additionalScanEntries().length;
+      const capacity = additionalScanCapacity();
+      return count > capacity
+        ? `Additional scans exceed the ${capacity}-strip limit. Remove ${count - capacity} strip(s).`
+        : "";
+    }
+
+    function pruneSourceFile(file) {
+      const save = state.preparedSaves.get(file);
+      const entries = state.preparedDotcodes.get(file) || [];
+      if (entries.length === 0) state.preparedDotcodes.delete(file);
+      if (!entries.length && !save?.application && !save?.calibration) {
+        state.sourceFiles = state.sourceFiles.filter((candidate) => candidate !== file);
+        state.preparedSaves.delete(file);
+      }
+    }
+
     function removeSaveFile(file) {
-      if (state.busy || state.preparing || fileKind(file) !== "SAV") {
-        return;
-      }
-      state.sourceFiles = state.sourceFiles.filter((candidate) => candidate !== file);
-      if (state.preparedSave?.file === file) {
-        state.preparedSave = null;
-      }
+      if (state.busy || state.preparing || fileKind(file) !== "SAV") return;
+      state.preparedSaves.delete(file);
+      state.preparedDotcodes.delete(file);
+      pruneSourceFile(file);
       resetContentErrors();
       state.inputNotice = "";
       analyzePreparedDotcodes();
@@ -91,75 +176,52 @@
     }
 
     function removeSaveComponent(file, component) {
-      if (
-        state.busy ||
-        state.preparing ||
-        state.preparedSave?.file !== file ||
-        !["application", "calibration"].includes(component)
-      ) {
-        return;
-      }
-
+      const save = state.preparedSaves.get(file);
+      if (state.busy || state.preparing || !save || !["application", "calibration"].includes(component)) return;
+      save[component] = null;
+      if (component === "application") state.preparedDotcodes.delete(file);
+      pruneSourceFile(file);
       resetContentErrors();
-      state.preparedSave[component] = null;
-
-      if (!state.preparedSave.application && !state.preparedSave.calibration) {
-        return removeSaveFile(file);
-      }
-
       state.inputNotice = "";
       analyzePreparedDotcodes();
       return true;
     }
 
     function removePreparedDotcode(file, entry) {
-      if (state.busy || state.preparing) {
-        return;
-      }
+      if (state.busy || state.preparing) return;
       const entries = state.preparedDotcodes.get(file);
-      const entryIndex = entries?.indexOf(entry) ?? -1;
-      if (entryIndex < 0) {
-        return;
+      if (!entries?.includes(entry)) return;
+      const retained = entries.filter((candidate) => candidate !== entry);
+      state.preparedDotcodes.set(file, retained);
+      const save = state.preparedSaves.get(file);
+      if (save?.application) {
+        save.application.rawEntries = retained;
+        if (!retained.length) save.application = null;
       }
-
+      pruneSourceFile(file);
       resetContentErrors();
-      state.preparedApplication = null;
-      state.preparedNative = null;
-
-      const retainedEntries = entries.filter((_candidate, index) => index !== entryIndex);
-      if (retainedEntries.length > 0) {
-        state.preparedDotcodes.set(file, retainedEntries);
-      } else {
-        state.preparedDotcodes.delete(file);
-        state.sourceFiles = state.sourceFiles.filter((candidate) => candidate !== file);
-      }
-
       state.inputNotice = "";
       analyzePreparedDotcodes();
       return true;
     }
 
     function clearKind(kind) {
-      if (state.busy || state.preparing) {
-        return;
-      }
+      if (state.busy || state.preparing) return;
+      resetContentErrors();
       if (kind === "rom" || kind === "all") {
         state.romFile = null;
         state.preparedRom = null;
         state.romError = "";
-        state.compatibilityError = "";
-        state.optionError = "";
       }
       if (kind === "source" || kind === "all") {
         state.sourceFiles = [];
-        state.compatibilityError = "";
-        state.optionError = "";
-        state.sourceError = "";
-        state.sourceNotice = "";
-        state.preparedDotcodes = new Map();
+        state.preparedDotcodes.clear();
+        state.preparedSaves.clear();
+        state.contentOrder = [];
+        state.mainCards = [];
+        state.mainSave = null;
         state.preparedApplication = null;
         state.preparedNative = null;
-        state.preparedSave = null;
         state.applicationTitle = "";
       }
       state.inputNotice = "";
@@ -167,171 +229,67 @@
     }
 
     function contentItems() {
-      const items = [];
-      const usingDotcodeContent = selectedDotcodeFiles().length > 0;
-      const pendingDetails = () => ({
-        state: "pending",
-        region: "Reading\u2026",
-        title: "\u2014",
-        index: "\u2014",
-        count: "\u2014",
+      const calibrationItems = [], saveItems = [];
+      const fixedItem = (file, contentKind, title, region, removeAction, role) => ({
+        file, entry: null, card: null, contentKind, removeAction, role,
+        details: { state: "ready", region, title, index: "\u2014", count: "\u2014", crc32: "\u2014" },
       });
-
-      for (const file of state.sourceFiles) {
-        if (fileKind(file) === "SAV") {
-          const preparedSave = state.preparedSave?.file === file ? state.preparedSave : null;
-          if (!preparedSave) {
-            items.push({
-              file,
-              entry: null,
-              contentKind: "application",
-              details: pendingDetails(),
-              removeAction: "save-file",
-            });
-            continue;
-          }
-          if (preparedSave.application) {
-            const { metadata, rawEntries } = preparedSave.application;
-            if (!usingDotcodeContent) {
-              if (rawEntries.length > 0) {
-                for (const [index, entry] of rawEntries.entries()) {
-                  items.push({
-                    file,
-                    entry,
-                    contentKind: "application",
-                    details: {
-                      state: "ready",
-                      region: regionLabel(metadata.applicationRegion),
-                      title: metadata.title || "Untitled",
-                      index: String(entry.metadata.cardIndex),
-                      count: String(entry.metadata.cardCount),
-                    },
-                    removeAction: index === 0 ? "save-application" : null,
-                  });
-                }
-              } else {
-                items.push({
-                  file,
-                  entry: null,
-                  contentKind: "application",
-                  details: {
-                    state: "ready",
-                    region: regionLabel(metadata.applicationRegion),
-                    title: metadata.title || "Untitled",
-                    index: "\u2014",
-                    count: "\u2014",
-                  },
-                  removeAction: "save-application",
-                });
-              }
-            } else {
-              items.push({
-                file,
-                entry: null,
-                contentKind: "inactive-save-application",
-                details: {
-                  state: "inactive",
-                  region: "Inactive",
-                  title: `Saved card content (inactive): ${metadata.title || "Untitled"}`,
-                  index: "\u2014",
-                  count: "\u2014",
-                },
-                removeAction: "save-application",
-              });
-            }
-          }
-          if (isSaveDataMode() && preparedSave.calibration) {
-            items.push({
-              file,
-              entry: null,
-              contentKind: "calibration",
-              details: {
-                state: "ready",
-                region: "\u2014",
-                title: "e-Reader Calibration Data",
-                index: "\u2014",
-                count: "\u2014",
-              },
-              removeAction: "save-calibration",
-            });
-          }
-          continue;
+      for (const file of selectedSaveFiles()) {
+        const save = state.preparedSaves.get(file);
+        if (save?.calibration) {
+          calibrationItems.push(fixedItem(file, "calibration", "e-Reader Calibration Data", "\u2014",
+            "save-calibration", calibrationItems.length === 0 ? "calibration" : "inactive"));
         }
-        const entries = state.preparedDotcodes.get(file);
-        if (entries && entries.length > 0) {
-          for (const entry of entries) {
-            items.push({
-              file,
-              entry,
-              contentKind: "application",
-              details: {
-                state: "ready",
-                region: regionLabel(entry.metadata.region),
-                title: entry.metadata.embeddedTitle || "Untitled",
-                index: String(entry.metadata.cardIndex),
-                count: String(entry.metadata.cardCount),
-              },
-              removeAction: "dotcode",
-            });
-          }
-        } else {
-          items.push({
-            file,
-            entry: null,
-            contentKind: "application",
-            details: pendingDetails(),
-            removeAction: null,
-          });
+        if (save?.application && !save.application.rawEntries.length) {
+          saveItems.push(fixedItem(file, "application", save.application.metadata.title || "Untitled",
+            regionLabel(save.application.metadata.applicationRegion), "save-application", save === state.mainSave ? "main" : "inactive"));
         }
       }
-      for (const file of queuedContentFiles()) {
-        items.push({
-          file,
-          entry: null,
-          contentKind: "application",
-          details: pendingDetails(),
-          removeAction: null,
-        });
-      }
-
-      for (const item of items) {
-        item.details.crc32 = item.entry
-          ? patcher.crc32(item.entry.bytes).toString(16).toUpperCase().padStart(8, "0")
-          : "\u2014";
+      const main = new Set(state.mainCards);
+      const items = [...calibrationItems, ...saveItems, ...state.contentOrder.map((card) => ({
+        ...card, card, contentKind: "application", removeAction: "dotcode",
+        role: main.has(card) ? "main" : "additional",
+        details: {
+          state: "ready",
+          region: regionLabel(card.entry.metadata.region),
+          title: card.entry.metadata.embeddedTitle || "Untitled",
+          index: String(card.entry.metadata.cardIndex),
+          count: String(card.entry.metadata.cardCount),
+          crc32: patcher.crc32(card.entry.bytes).toString(16).toUpperCase().padStart(8, "0"),
+        },
+      }))];
+      const pending = state.sourceFiles.filter((file) =>
+        !state.preparedSaves.has(file) && !state.preparedDotcodes.has(file),
+      );
+      for (const file of [...pending, ...queuedContentFiles()]) {
+        const item = fixedItem(file, "application", "\u2014", "Reading\u2026", null, "pending");
+        item.details.state = "pending";
+        items.push(item);
       }
       return items;
     }
 
     function refreshDuplicateDotcodes() {
-      const uniqueEntries = createDotcodeIndex();
-      const retainedFiles = [];
+      const unique = createDotcodeIndex();
       let duplicateCount = 0;
-      for (const file of state.sourceFiles) {
+      for (const file of [...state.sourceFiles]) {
         const entries = state.preparedDotcodes.get(file);
-        if (!entries) {
-          retainedFiles.push(file);
-          continue;
+        if (!entries) continue;
+        const retained = entries.filter((entry) => {
+          if (unique.has(entry)) { duplicateCount += 1; return false; }
+          unique.add(entry);
+          return true;
+        });
+        state.preparedDotcodes.set(file, retained);
+        const save = state.preparedSaves.get(file);
+        if (save?.application) {
+          save.application.rawEntries = retained;
+          if (!retained.length) save.application = null;
         }
-        const retainedEntries = [];
-        for (const entry of entries) {
-          if (uniqueEntries.has(entry)) {
-            duplicateCount += 1;
-          } else {
-            uniqueEntries.add(entry);
-            retainedEntries.push(entry);
-          }
-        }
-        if (retainedEntries.length > 0) {
-          state.preparedDotcodes.set(file, retainedEntries);
-          retainedFiles.push(file);
-        } else {
-          state.preparedDotcodes.delete(file);
-        }
+        pruneSourceFile(file);
       }
-      state.sourceFiles = retainedFiles;
-      if (duplicateCount > 0) {
-        const duplicateNotice = `Ignored ${duplicateCount} duplicate dot-code ${duplicateCount === 1 ? "entry" : "entries"}.`;
-        state.inputNotice = [state.inputNotice, duplicateNotice].filter(Boolean).join(" ");
+      if (duplicateCount) {
+        state.inputNotice = [state.inputNotice, `Ignored ${duplicateCount} duplicate dot-code ${duplicateCount === 1 ? "entry" : "entries"}.`].filter(Boolean).join(" ");
       }
     }
 
@@ -340,102 +298,43 @@
       state.sourceNotice = "";
       state.preparedApplication = null;
       state.preparedNative = null;
-      const saveFiles = selectedSaveFiles();
-      const dotcodeFiles = selectedDotcodeFiles();
-      if (dotcodeFiles.length === 0 && saveFiles.length > 0) {
-        if (state.preparedSave?.file !== saveFiles[0]) {
-          state.sourceError = "The save file has not finished validating.";
-        }
-        return;
-      }
-      if (dotcodeFiles.length === 0) {
-        return;
-      }
-      const allFilesPrepared = dotcodeFiles.every((file) => {
-        const entries = state.preparedDotcodes.get(file);
-        return entries && entries.length > 0;
-      });
-      const allEntries = dotcodeFiles.flatMap((file) => state.preparedDotcodes.get(file) || []);
-      if (!allFilesPrepared || allEntries.length === 0) {
-        return;
-      }
-      const entries = allEntries;
-
-      const contentKinds = new Set(
-        entries.map((entry) => entry.metadata.contentKind || "application"),
-      );
-      if (contentKinds.size !== 1) {
-        state.sourceError =
-          "Different content types cannot be combined. Please remove all but one.";
-        return;
-      }
-      if (!contentKinds.has("application")) {
-        if (entries.length !== 1) {
-          state.sourceError =
-            "Only one item of this content type can be used at a time. Please remove all but one.";
-          return;
-        }
-        state.preparedNative = entries[0];
-        return;
-      }
-      const setIds = new Set(entries.map((entry) => entry.metadata.setId));
-      if (setIds.size !== 1) {
-        state.sourceError =
-          "The selected files contain different content sets. Please remove all but one set.";
-        return;
-      }
-
-      const cardCount = entries[0].metadata.cardCount;
-      const indices = new Set();
-      for (const entry of entries) {
-        const cardIndex = entry.metadata.cardIndex;
-        if (indices.has(cardIndex)) {
-          state.sourceError = `Duplicate internal dot-code strip index ${cardIndex}.`;
-          return;
-        }
-        indices.add(cardIndex);
-      }
-
-      const missing = [];
-      for (let index = 1; index <= cardCount; index += 1) {
-        if (!indices.has(index)) {
-          missing.push(index);
-        }
-      }
-      if (missing.length > 0 || indices.size !== cardCount) {
-        state.sourceNotice =
-          `Dot-code set incomplete: ${indices.size} of ${cardCount} strips added; ` +
-          `missing internal strip${missing.length === 1 ? "" : "s"} ${missing.join(", ")}. ` +
-          "Add the remaining file(s) using the same drop zone.";
-        return;
-      }
-
-      const fallbackTitle = entries.some((entry) => entry.metadata.embeddedTitle) ? "" : "Untitled";
-
+      state.mainCards = [];
+      state.mainSave = null;
+      syncContentOrder();
+      state.mainSave = selectedSaveFiles().map((file) => state.preparedSaves.get(file)).find((save) =>
+        save?.application && !save.application.rawEntries.length,
+      ) || null;
+      if (state.mainSave || !state.contentOrder.length) return;
+      state.mainCards = contentGroups()[0];
+      const entries = state.mainCards.map(({ entry }) => entry);
       try {
-        state.preparedApplication = patcher.rawFilesToApplication(
-          entries.map((entry) => ({ name: entry.name, bytes: entry.bytes })),
-          fallbackTitle,
-        );
+        const first = patcher.inspectRawDotcode(entries[0].bytes, entries[0].name);
+        if (first.contentKind !== "application") {
+          state.preparedNative = entries[0];
+          return;
+        }
+        const indices = new Set(entries.map((entry) => entry.metadata.cardIndex));
+        const missing = [];
+        for (let index = 1; index <= first.cardCount; index++) {
+          if (!indices.has(index)) missing.push(index);
+        }
+        if (missing.length) {
+          state.sourceNotice = `Main content incomplete: ${indices.size} of ${first.cardCount} strips added; missing internal strip(s) ${missing.join(", ")}. Add the remaining files using the drop zone.`;
+          return;
+        }
+        state.preparedApplication = patcher.rawFilesToApplication(entries,
+          entries.some((entry) => entry.metadata.embeddedTitle) ? "" : "Untitled");
       } catch (error) {
         state.sourceError = error instanceof Error ? error.message : String(error);
       }
     }
+
     return Object.freeze({
-      state,
-      resetContentErrors,
-      contentItems,
-      isSaveDataMode,
-      queuedContentFiles,
-      selectedSaveFiles,
-      selectedDotcodeFiles,
-      selectedApplicationIsReady,
-      removeSaveFile,
-      removeSaveComponent,
-      removePreparedDotcode,
-      clearKind,
-      refreshDuplicateDotcodes,
-      analyzePreparedDotcodes,
+      state, isSaveDataMode, selectedSaveFiles, selectedDotcodeFiles, selectedCalibration,
+      selectedApplicationIsReady, queuedContentFiles, resetContentErrors, contentItems,
+      contentGroups, moveContent, shiftContent, additionalScanEntries, additionalScanCapacity, additionalScanIssue,
+      removeSaveFile, removeSaveComponent, removePreparedDotcode, clearKind,
+      refreshDuplicateDotcodes, analyzePreparedDotcodes,
     });
   }
 

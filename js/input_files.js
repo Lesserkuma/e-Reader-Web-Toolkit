@@ -217,7 +217,7 @@
       for (const [fingerprint, matchingFiles] of selectedByFingerprint) {
         const kind = fileKind(matchingFiles[0]);
         if (
-          ["RAW", "SCAN", "SVG"].includes(kind) &&
+          ["SAV", "RAW", "SCAN", "SVG"].includes(kind) &&
           !allDecodedDotcodesRemain(matchingFiles, retainedIndex)
         )
           continue;

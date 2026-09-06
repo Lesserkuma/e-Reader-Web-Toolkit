@@ -22,7 +22,6 @@
 
   const { BYTES_PER_BLOCK, BITS_PER_BLOCK, MODULATION_TABLE } = layout;
   const codec = rawModule.createRawCodec();
-  const PHASE_THRESHOLDS = Array.from({ length: 71 }, (_, i) => 180 + i * 0.5);
   const MAX_SAMPLER_PIXELS = 8_000_000;
 
   const { dot } = math;
@@ -43,12 +42,12 @@
   }
   const dataIndices = Uint16Array.from(positions, ([x, y]) => modelIndex.get(y * 44 + x));
 
-  const BASE_COUNT = 50;
+  const OFFSETS = Object.freeze([-1, -2 / 3, -1 / 3, 0, 1 / 3, 2 / 3, 1]);
+  const BASE_COUNT = 2 * OFFSETS.length ** 2;
   const PHASE_COUNT = 5;
   const FEATURE_COUNT = 1 + BASE_COUNT * PHASE_COUNT;
   const MOMENT_COUNT = 13;
   const PAIR_COUNT = (BASE_COUNT * (BASE_COUNT + 1)) / 2;
-  const OFFSETS = Object.freeze([-1.2, -0.6, 0, 0.6, 1.2]);
 
   function physicalHeader(blockCount) {
     const long = blockCount === layout.LONG_BLOCK_COUNT;
@@ -312,7 +311,11 @@
         ),
       );
     }
-    return { samples, points, shifts };
+    const ordered = Float64Array.from(samples.flatMap((block) => Array.from(block))).sort();
+    const low = ordered[Math.floor(ordered.length * 0.1)];
+    const high = ordered[Math.floor(ordered.length * 0.9)];
+    const thresholds = Array.from({ length: 71 }, (_, index) => low + (high - low) * index / 70);
+    return { samples, points, shifts, thresholds };
   }
 
   function prepareBlock(state, xy, corners) {
@@ -689,6 +692,11 @@
       if (!coordinates || coordinates.length !== layout.BITS_PER_BLOCK * 2) {
         throw new Error("Invalid calibrated dot coordinates for filter training.");
       }
+      // Scale the neighborhood with the local cell pitch to cover diagonal neighbors.
+      const radius = Math.SQRT2 * Math.hypot(
+        coordinates[2] - coordinates[0], coordinates[3] - coordinates[1],
+      );
+      const offsets = OFFSETS.map((offset) => offset * radius);
       for (let bit = 0; bit < layout.BITS_PER_BLOCK; bit++) {
         const point = block * layout.BITS_PER_BLOCK + bit;
         const baseOffset = point * BASE_COUNT;
@@ -697,8 +705,8 @@
         const y = coordinates[bit * 2 + 1];
         let feature = baseOffset;
         for (let channel = 0; channel < 2; channel++) {
-          for (const dy of OFFSETS) {
-            for (const dx of OFFSETS) {
+          for (const dy of offsets) {
+            for (const dx of offsets) {
               bases[feature++] = (interpolate(sampler, x + dx, y + dy, channel) - 180) / 60;
             }
           }
@@ -784,7 +792,7 @@
       ) {
         throw new Error("Invalid point reconstruction");
       }
-      for (const threshold of source.thresholds || PHASE_THRESHOLDS) {
+      for (const threshold of source.thresholds) {
         const raw = demodulate(source.samples, threshold);
         const header = new Uint8Array(24);
         for (let block = 0; block < 12; block++) {
@@ -839,6 +847,7 @@
 
   function createSession(image) {
     let sampler;
+    let croppedRegion;
     function samplingRegion(top, bottom) {
       if (image.width * image.height <= MAX_SAMPLER_PIXELS) {
         sampler ||= createSampler(image);
@@ -852,15 +861,24 @@
       const width = right - left;
       const height = lower - upper;
       if (width <= 0 || height <= 0 || width * height > MAX_SAMPLER_PIXELS) return null;
-      const stride = image.redOnly ? 1 : 4;
-      const data = new Uint8Array(width * height * stride);
-      for (let y = 0; y < height; y++) {
-        const offset = ((upper + y) * image.width + left) * stride;
-        data.set(image.data.subarray(offset, offset + width * stride), y * width * stride);
+      if (
+        !croppedRegion || croppedRegion.left !== left || croppedRegion.upper !== upper ||
+        croppedRegion.width !== width || croppedRegion.height !== height
+      ) {
+        const stride = image.redOnly ? 1 : 4;
+        const data = new Uint8Array(width * height * stride);
+        for (let y = 0; y < height; y++) {
+          const offset = ((upper + y) * image.width + left) * stride;
+          data.set(image.data.subarray(offset, offset + width * stride), y * width * stride);
+        }
+        croppedRegion = {
+          left, upper, width, height,
+          sampler: createSampler({ width, height, data, redOnly: image.redOnly }),
+        };
       }
       const translate = p => ({ x: p.x - left, y: p.y - upper });
       return {
-        sampler: createSampler({ width, height, data, redOnly: image.redOnly }),
+        sampler: croppedRegion.sampler,
         top: top.map(translate),
         bottom: bottom.map(translate),
       };
@@ -872,25 +890,30 @@
       const phase = calibrateGrid(region.sampler, region.top, region.bottom);
       const collector = createCollector(blockCount);
       collector.add(phase);
+      function learn() {
+        let known = collector.known();
+        if (known.length < Math.max(4, Math.ceil(collector.columns / 4))) return null;
+        for (let round = 0; round < 2; round++) {
+          const learned = trainFilter(region.sampler, phase, known, blockCount);
+          collector.add(learned);
+          const raw = collector.finish(learned.samples);
+          if (raw) {
+            const result = sampling.refineLowResolutionRaw(image, top, bottom, raw);
+            codec.decodeRawDotcodeDetails(result.raw, "The reconstructed strip");
+            return result;
+          }
+          const expanded = collector.known();
+          if (expanded.length <= known.length) break;
+          known = expanded;
+        }
+        return null;
+      }
+      const learned = learn();
+      if (learned) return learned;
       for (const source of inverseSources(region.sampler, region.top, region.bottom, phase)) {
         collector.add(source);
       }
-      let known = collector.known();
-      if (known.length < Math.max(4, Math.ceil(collector.columns / 4))) return null;
-      for (let round = 0; round < 2; round++) {
-        const learned = trainFilter(region.sampler, phase, known, blockCount);
-        collector.add(learned);
-        const raw = collector.finish(learned.samples);
-        if (raw) {
-          const result = sampling.refineLowResolutionRaw(image, top, bottom, raw);
-          codec.decodeRawDotcodeDetails(result.raw, "The reconstructed strip");
-          return result;
-        }
-        const expanded = collector.known();
-        if (expanded.length <= known.length) break;
-        known = expanded;
-      }
-      return null;
+      return learn();
     }
     return { decode };
   }

@@ -103,7 +103,7 @@
         }
 
         const titleField = app.subarray(12, 12 + setTitleSize);
-        const titleArea = app.subarray(12, payloadOffset);
+        const titleArea = app.slice(12, payloadOffset);
         let embeddedTitleBytes = firstNull(titleField);
         let embeddedTitle;
         let saveTitleBytes;
@@ -161,6 +161,24 @@
         }
         if (embeddedTitleBytes.length >= 0x24) {
           throw new ErrorType("Application title is too long for the save record");
+        }
+
+        if (extendedApplicationHeader && titleEncoding === "Shift-JIS" && cardTitleSize > 0) {
+          for (let offset = setTitleSize; offset < titleArea.length; offset += cardTitleSize) {
+            const field = titleArea.subarray(offset, offset + cardTitleSize);
+            const text = firstNull(field);
+            if (text.length < 2 || text.length === field.length) continue;
+            const last = text[text.length - 1];
+            if (!((last >= 0x81 && last <= 0x9f) || (last >= 0xe0 && last <= 0xfc))) continue;
+            try {
+              decodeShiftJis(text.subarray(0, text.length - 1), true);
+            } catch {
+              continue;
+            }
+            // A dangling Shift-JIS lead byte in a card subtitle must not split a set.
+            // Normalize only the identity copy; keep the original strip intact.
+            field[text.length - 1] = 0;
+          }
         }
 
         const headerTail = header.slice(7, 12);

@@ -23,7 +23,6 @@
   }) {
     const {
       state,
-      selectedSaveFiles,
       selectedDotcodeFiles,
       refreshDuplicateDotcodes,
       analyzePreparedDotcodes,
@@ -63,7 +62,7 @@
     function rejectContentFile(file, message) {
       state.sourceFiles = state.sourceFiles.filter((candidate) => candidate !== file);
       state.preparedDotcodes.delete(file);
-      if (state.preparedSave?.file === file) state.preparedSave = null;
+      state.preparedSaves.delete(file);
       appendNotice(`Ignored invalid content input: ${file.name}: ${message}`);
     }
 
@@ -152,6 +151,7 @@
             const profile = await patcher.validateRom(bytes);
             state.romFile = file;
             state.preparedRom = { file, bytes, profile };
+            state.additionalScanError = "";
             state.romError = "";
             state.compatibilityError = "";
             state.optionError = "";
@@ -169,7 +169,6 @@
       }
 
       state.inputNotice = notices.join(" ");
-      const incomingDotcodeFiles = [];
       for (const file of files.filter((file) =>
         ["SAV", "RAW", "SCAN", "SVG"].includes(fileKind(file)),
       )) {
@@ -178,16 +177,13 @@
           appendNotice(`Ignored invalid content input: ${file.name}: ${sizeError}`);
           continue;
         }
-        if (fileKind(file) === "SAV" && selectedSaveFiles().length > 0) {
-          appendNotice(`Ignored additional SAV file: ${file.name}. Remove the selected SAV first.`);
-          continue;
-        }
-        state.sourceFiles.push(file);
+        if (!state.sourceFiles.includes(file)) state.sourceFiles.push(file);
         model.resetContentErrors();
         if (fileKind(file) === "SAV") await prepareSaveFile(file);
-        else incomingDotcodeFiles.push(file);
+        else await prepareDotcodeFiles([file]);
       }
-      if (incomingDotcodeFiles.length > 0) await prepareDotcodeFiles(incomingDotcodeFiles);
+      refreshDuplicateDotcodes();
+      analyzePreparedDotcodes();
       renderInputs();
       refreshInputStatus();
     }
@@ -198,7 +194,7 @@
       }
       state.sourceError = "";
       state.sourceNotice = "";
-      state.preparedSave = null;
+      state.preparedSaves.delete(file);
       renderInputs();
 
       try {
@@ -206,13 +202,16 @@
         await nextFrame();
         const bytes = await readFileBytes(file);
         const inspected = saveData.inspect(bytes, file.name);
-        state.preparedSave = {
+        state.preparedSaves.set(file, {
           file,
           bytes,
           application: inspected.application,
           calibration: inspected.calibration,
-        };
-        state.inputNotice = [state.inputNotice, inspected.notice].filter(Boolean).join(" ");
+        });
+        if (inspected.application?.rawEntries.length) {
+          state.preparedDotcodes.set(file, inspected.application.rawEntries);
+          rememberDecodedDotcodes(file, inspected.application.rawEntries);
+        }
         analyzePreparedDotcodes();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -233,61 +232,8 @@
       renderInputs();
       for (let index = 0; index < incomingFiles.length; index += 1) {
         const file = incomingFiles[index];
-        const sourceKind = fileKind(file);
         try {
-          setStatus(
-            sourceKind === "RAW"
-              ? `Reading RAW strip ${index + 1} of ${incomingFiles.length}: ${file.name}…`
-              : `Decoding dot-code image ${index + 1} of ${incomingFiles.length}: ${file.name}…`,
-          );
-          await nextFrame();
-          let decodedStrips;
-          let preparedBaseName;
-          const scanQualities = new Map();
-          const decodePixels = (pixels) =>
-            browserRuntime.decodeDotcodeImages(pixels, dotcode, {
-              onStripDecoded: (raw, quality) => scanQualities.set(raw, quality),
-            });
-          if (sourceKind === "SVG") {
-            const svgInput = await readSvgInput(file);
-            if (svgInput.rawMetadata) {
-              decodedStrips = [svgInput.rawMetadata];
-            } else {
-              setStatus(`Rasterizing SVG dot-code image: ${file.name}…`);
-              await nextFrame();
-              const pixels = await loadSvgImagePixels(file, svgInput);
-              decodedStrips = await decodePixels(pixels);
-            }
-            preparedBaseName = file.name.replace(/\.svg$/i, "");
-          } else if (sourceKind === "SCAN") {
-            const pixels = await loadImagePixels(file, scanImageDimensionsForFile);
-            decodedStrips = await decodePixels(pixels);
-            preparedBaseName = file.name.replace(/\.(?:jpe?g|png)$/i, "");
-          } else {
-            decodedStrips = [await readFileBytes(file)];
-            preparedBaseName = file.name.replace(/\.raw$/i, "");
-          }
-
-          const fileEntries = [];
-          for (let stripIndex = 0; stripIndex < decodedStrips.length; stripIndex += 1) {
-            const bytes = decodedStrips[stripIndex];
-            const stripLabel =
-              decodedStrips.length === 1
-                ? file.name
-                : `${file.name} (dot code ${stripIndex + 1}/${decodedStrips.length})`;
-            const preparedName =
-              decodedStrips.length === 1
-                ? `${preparedBaseName}.raw`
-                : `${preparedBaseName} [dot code ${stripIndex + 1}].raw`;
-            const metadata = patcher.inspectRawDotcode(bytes, stripLabel);
-            fileEntries.push({
-              name: preparedName,
-              sourceName: file.name,
-              bytes,
-              metadata,
-              scanQuality: scanQualities.get(bytes) || null,
-            });
-          }
+          const fileEntries = await readDotcodeFile(file);
           rememberDecodedDotcodes(file, fileEntries);
           state.preparedDotcodes.set(file, fileEntries);
         } catch (error) {
@@ -297,6 +243,44 @@
       }
       refreshDuplicateDotcodes();
       analyzePreparedDotcodes();
+    }
+
+    async function readDotcodeFile(file) {
+      const sourceKind = fileKind(file);
+      setStatus(`Reading dot-code content: ${file.name}…`);
+      await nextFrame();
+      let decodedStrips;
+      const preparedBaseName = file.name.replace(/\.(?:raw|svg|jpe?g|png)$/i, "");
+      const scanQualities = new Map();
+      const decodePixels = (pixels) =>
+        browserRuntime.decodeDotcodeImages(pixels, dotcode, {
+          onStripDecoded: (raw, quality) => scanQualities.set(raw, quality),
+        });
+      if (sourceKind === "SVG") {
+        const svgInput = await readSvgInput(file);
+        if (svgInput.rawMetadata) {
+          decodedStrips = [svgInput.rawMetadata];
+        } else {
+          setStatus(`Rasterizing SVG dot-code image: ${file.name}…`);
+          await nextFrame();
+          decodedStrips = await decodePixels(await loadSvgImagePixels(file, svgInput));
+        }
+      } else if (sourceKind === "SCAN") {
+        decodedStrips = await decodePixels(await loadImagePixels(file, scanImageDimensionsForFile));
+      } else {
+        decodedStrips = [await readFileBytes(file)];
+      }
+      return decodedStrips.map((bytes, index) => {
+        const single = decodedStrips.length === 1;
+        const label = single ? file.name : `${file.name} (dot code ${index + 1}/${decodedStrips.length})`;
+        return {
+          name: single ? `${preparedBaseName}.raw` : `${preparedBaseName} [dot code ${index + 1}].raw`,
+          sourceName: file.name,
+          bytes,
+          metadata: patcher.inspectScanCard(bytes, label),
+          scanQuality: scanQualities.get(bytes) || null,
+        };
+      });
     }
 
     function enqueueFiles(fileList) {
