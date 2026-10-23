@@ -18,6 +18,7 @@
     fileServices,
     browserRuntime,
     svgServices,
+    rawDotcodeToPng,
     nextFrame,
   }) {
     const { state, isSaveDataMode } = model;
@@ -168,9 +169,15 @@
       }
     }
 
-    function downloadDotcode(entry, extension, filename) {
+    async function downloadDotcode(entry, extension, filename) {
       try {
         if (extension === "raw") downloadBytes(entry.bytes, filename, "application/octet-stream");
+        else if (extension === "png")
+          downloadBytes(
+            await rawDotcodeToPng(entry.bytes, entry.sourceName),
+            filename,
+            "image/png",
+          );
         else
           downloadBytes(
             rawDotcodeToSvg(entry.bytes, entry.sourceName),

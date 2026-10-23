@@ -22,6 +22,7 @@
     "svg_renderer.js",
     "svg_raster.js",
     "svg.js",
+    "png_renderer.js",
     "save_data.js",
     "zip_archive.js",
     "input_files.js",

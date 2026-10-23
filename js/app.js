@@ -32,6 +32,7 @@
     inputFiles: window.EReaderInputFiles,
     browserRuntime: window.EReaderBrowserRuntime,
     svg: window.EReaderSvg,
+    png: window.EReaderPngRenderer,
     saveData: window.EReaderSaveData,
     model: window.EReaderAppModel,
     view: window.EReaderAppView,
@@ -64,7 +65,13 @@
   const model = modules.model.createAppModel(patcher, fileServices);
   const { state } = model;
   const actions = {};
-  const view = modules.view.createAppView(elements, model, fileServices, actions);
+  const view = modules.view.createAppView(
+    elements,
+    model,
+    fileServices,
+    actions,
+    modules.png.constants.PNG_RENDER_DPI,
+  );
   const nextFrame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
   const importer = modules.importer.createImportController({
     model,
@@ -87,6 +94,7 @@
     fileServices,
     browserRuntime,
     svgServices,
+    rawDotcodeToPng: modules.png.createPngRenderer(patcher),
     nextFrame,
   });
   function updateModel(action, ...args) {

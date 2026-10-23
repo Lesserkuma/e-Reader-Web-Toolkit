@@ -526,7 +526,7 @@ a {
 }
 
 .content-file-table .data-column {
-  width: 7.5rem;
+  width: 10rem;
 }
 
 .content-file-table.has-data th:nth-child(3),

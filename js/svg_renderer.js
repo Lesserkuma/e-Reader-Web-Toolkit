@@ -11,7 +11,6 @@
 
   const {
     RAW_METADATA_ID,
-    DOTCODE_BYTES_PER_BLOCK,
     DOTCODE_RENDER_DPI,
     DOTCODE_RENDER_SCALE,
     DOTCODE_GRID_DPI,
@@ -19,8 +18,6 @@
     DOTCODE_DATA_DOT_RADIUS,
     DOTCODE_SYNC_MARKER_DIAMETER,
   } = format.constants;
-  const DOTCODE_MODULATION = layout.MODULATION_TABLE;
-  const dotcodeDataPosition = layout.dataPosition;
   const svgNumber = (value) => {
     const rounded = Math.round(value * 10000) / 10000;
     return Object.is(rounded, -0) ? "0" : String(rounded);
@@ -44,9 +41,7 @@
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;");
 
-      const blockCount = raw.length / DOTCODE_BYTES_PER_BLOCK;
-      const logicalWidth = blockCount * 35 + 9;
-      const logicalHeight = 44;
+      const { blockCount, logicalWidth, logicalHeight, dots } = layout.createDotcodeGeometry(raw);
       const viewWidth = logicalWidth * DOTCODE_RENDER_SCALE;
       const viewHeight = logicalHeight * DOTCODE_RENDER_SCALE;
       const configuredDotSize =
@@ -78,53 +73,6 @@
 
       const widthPoints = ((viewWidth * 72) / DOTCODE_RENDER_DPI).toFixed(2);
       const heightPoints = ((viewHeight * 72) / DOTCODE_RENDER_DPI).toFixed(2);
-      const dots = new Set();
-      const addDot = (x, y) => dots.add(y * logicalWidth + x);
-
-      const startAddress = raw[DOTCODE_BYTES_PER_BLOCK + 1];
-      const addresses = layout.addressSequence(startAddress, blockCount + 1);
-      for (let block = 0; block < blockCount; block += 1) {
-        const leftX = block * 35 + 4;
-        const rightX = (block + 1) * 35 + 4;
-        addDot(leftX, 9);
-        addDot(rightX, 9);
-        for (let bit = 0; bit < 16; bit += 1) {
-          if (addresses[block] & (1 << bit)) {
-            addDot(leftX, 33 - bit);
-          }
-          if (addresses[block + 1] & (1 << bit)) {
-            addDot(rightX, 33 - bit);
-          }
-        }
-
-        for (let index = 0; index <= 5; index += 1) {
-          for (const x of [block * 35 + 10 + index * 2, block * 35 + 23 + index * 2]) {
-            addDot(x, 4);
-            addDot(x, 39);
-          }
-        }
-
-        let sampleIndex = 0;
-        const blockOffset = block * DOTCODE_BYTES_PER_BLOCK;
-        for (let byteIndex = 0; byteIndex < DOTCODE_BYTES_PER_BLOCK; byteIndex += 1) {
-          const value = raw[blockOffset + byteIndex];
-          for (let shift = 4; shift >= 0; shift -= 4) {
-            const nibble = (value >>> shift) & 0x0f;
-            const symbol = DOTCODE_MODULATION[nibble];
-            for (let bit = 4; bit >= 0; bit -= 1) {
-              if (symbol & (1 << bit)) {
-                const [x, y] = dotcodeDataPosition(sampleIndex);
-                addDot(block * 35 + x, y);
-              }
-              sampleIndex += 1;
-            }
-          }
-        }
-        if (sampleIndex !== 1040) {
-          throw new Error("Generated dot-code block has an invalid modulation size");
-        }
-      }
-
       const markerRadius = DOTCODE_SYNC_MARKER_DIAMETER / 2;
       const svgParts = [
         '<g fill="#000000" stroke="none" stroke-width="0" shape-rendering="geometricPrecision">',

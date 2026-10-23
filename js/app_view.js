@@ -9,7 +9,7 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
 
-  function createAppView(elements, model, fileServices, actions) {
+  function createAppView(elements, model, fileServices, actions, pngDpi) {
     const {
       state,
       isSaveDataMode,
@@ -184,7 +184,9 @@
         "aria-label",
         extension === "raw"
           ? `Download RAW dot-code data as ${filename}`
-          : `Download 2400 ppi vector dot code as ${filename}`,
+          : extension === "png"
+            ? `Download ${pngDpi} dpi transparent PNG dot code as ${filename}`
+            : `Download 2400 ppi vector dot code as ${filename}`,
       );
       button.addEventListener("click", () => actions.downloadDotcode(entry, extension, filename));
       return button;
@@ -277,7 +279,11 @@
             const actions = document.createElement("div");
             actions.className = "data-download-actions";
 
-            actions.append(downloadButton(entry, "raw"), downloadButton(entry, "svg"));
+            actions.append(
+              downloadButton(entry, "raw"),
+              downloadButton(entry, "svg"),
+              downloadButton(entry, "png"),
+            );
             downloadCell.append(actions);
           }
           row.append(downloadCell);
